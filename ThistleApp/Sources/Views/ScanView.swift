@@ -36,6 +36,7 @@ struct ScanView: View {
             }
             .padding()
         }
+        .background(ThistleTheme.canvas.ignoresSafeArea())
         .navigationTitle("Scan")
         .onChange(of: scannedCode) { _, newValue in
             guard let newValue else { return }
@@ -45,7 +46,7 @@ struct ScanView: View {
 
     private var unsupportedView: some View {
         RoundedRectangle(cornerRadius: 24)
-            .fill(Color(.secondarySystemBackground))
+            .fill(ThistleTheme.card)
             .frame(height: 220)
             .overlay {
                 VStack(spacing: 8) {
@@ -73,7 +74,7 @@ struct ScanView: View {
             .disabled(store.manualBarcode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isLookingUpBarcode)
         }
         .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
     }
 
     @ViewBuilder
@@ -88,7 +89,7 @@ struct ScanView: View {
                     .foregroundStyle(.secondary)
             }
             .padding()
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+            .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
         }
     }
 }

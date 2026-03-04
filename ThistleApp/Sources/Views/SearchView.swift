@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct SearchView: View {
     @EnvironmentObject private var store: AppStore
@@ -8,6 +11,10 @@ struct SearchView: View {
             VStack(alignment: .leading, spacing: 18) {
                 filters
                 searchActions
+
+                if store.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !store.recentHistoryProducts.isEmpty {
+                    recentHistorySection
+                }
 
                 if !store.matchingMeals.isEmpty {
                     mealsSection
@@ -48,7 +55,18 @@ struct SearchView: View {
             }
             .padding()
         }
-        .navigationTitle("Thistle")
+        .background(ThistleTheme.canvas.ignoresSafeArea())
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text("Thistle")
+                    .font(brandTitleFont)
+                    .tracking(0.2)
+                    .foregroundStyle(ThistleTheme.wordmarkGradient)
+                    .shadow(color: ThistleTheme.blossomPurple.opacity(0.1), radius: 2, y: 1)
+                    .accessibilityAddTraits(.isHeader)
+            }
+        }
         .searchable(text: $store.query, prompt: "Products, brands, ingredients")
         .onSubmit(of: .search) {
             Task { await store.performSearch() }
@@ -86,7 +104,7 @@ struct SearchView: View {
             }
         }
         .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
     }
 
     private var searchActions: some View {
@@ -124,6 +142,22 @@ struct SearchView: View {
         }
     }
 
+    private var recentHistorySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Recent History")
+                .font(.headline)
+
+            ForEach(store.recentHistoryProducts) { product in
+                NavigationLink {
+                    ProductDetailView(product: product)
+                } label: {
+                    ProductCard(product: product, analysis: store.analysis(for: product))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
     private var deepSearchButton: some View {
         Button("BETA: Find With Deep Search") {
             Task { await store.runManualDeepSearchForCurrentQuery() }
@@ -143,7 +177,7 @@ struct SearchView: View {
             }
         }
         .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
     }
 
     private var mealsSection: some View {
@@ -174,8 +208,29 @@ struct SearchView: View {
                     .buttonStyle(.bordered)
                 }
                 .padding()
-                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+                .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
             }
         }
+    }
+
+    private var brandTitleFont: Font {
+#if canImport(UIKit)
+        if UIFont(name: "BitcountInk-Regular", size: 34) != nil {
+            return .custom("BitcountInk-Regular", size: 34)
+        }
+        if UIFont(name: "BitcountInk", size: 34) != nil {
+            return .custom("BitcountInk", size: 34)
+        }
+        if UIFont(name: "Bitcount-Ink", size: 34) != nil {
+            return .custom("Bitcount-Ink", size: 34)
+        }
+        if UIFont(name: "Sora-SemiBold", size: 34) != nil {
+            return .custom("Sora-SemiBold", size: 34)
+        }
+        if UIFont(name: "Quicksand-SemiBold", size: 34) != nil {
+            return .custom("Quicksand-SemiBold", size: 34)
+        }
+#endif
+        return .system(size: 33, weight: .semibold, design: .rounded)
     }
 }

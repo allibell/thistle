@@ -47,7 +47,7 @@ struct ProductDetailView: View {
                     macrosSection(for: currentProduct)
                 }
                 .padding()
-                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+                .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
 
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Serving")
@@ -61,7 +61,7 @@ struct ProductDetailView: View {
                     .buttonStyle(.borderedProminent)
                 }
                 .padding()
-                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+                .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
 
                 IngredientsSection(product: currentProduct, analysis: analysis)
                     .contextMenu {
@@ -80,6 +80,7 @@ struct ProductDetailView: View {
             }
             .padding()
         }
+        .background(ThistleTheme.canvas.ignoresSafeArea())
         .navigationTitle("Details")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -131,7 +132,7 @@ struct ProductDetailView: View {
             }
         }
         .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
     }
 
     private func proposal(for product: Product) -> DeepSearchProposal? {
@@ -174,7 +175,7 @@ struct ProductDetailView: View {
                                     .font(.caption2.weight(.bold))
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 3)
-                                    .background(Color.green.opacity(0.15), in: Capsule())
+                                    .background(ThistleTheme.primaryGreen.opacity(0.15), in: Capsule())
                             }
                         }
                         Text("Current: \(diff.oldValue)")
@@ -202,6 +203,6 @@ struct ProductDetailView: View {
             }
         }
         .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
     }
 }

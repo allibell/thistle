@@ -38,6 +38,7 @@ struct RootTabView: View {
                 Label("Goals", systemImage: "target")
             }
         }
-        .tint(.green)
+        .tint(ThistleTheme.primaryGreen)
+        .background(ThistleTheme.canvas.ignoresSafeArea())
     }
 }

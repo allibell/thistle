@@ -35,7 +35,7 @@ struct MacroSummaryView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 14))
     }
 }
 
@@ -55,7 +55,7 @@ struct IngredientsSection: View {
                 }
                 HStack(alignment: .top, spacing: 8) {
                     Circle()
-                        .fill((matchedFlag?.severity.color ?? .green).opacity(0.9))
+                        .fill((matchedFlag?.severity.color ?? ThistleTheme.primaryGreen).opacity(0.9))
                         .frame(width: 8, height: 8)
                         .padding(.top, 6)
                     VStack(alignment: .leading, spacing: 2) {
@@ -72,7 +72,7 @@ struct IngredientsSection: View {
             }
         }
         .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
     }
 }
 
@@ -108,7 +108,11 @@ struct ProductCard: View {
             }
         }
         .padding()
-        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 22))
-        .shadow(color: Color.black.opacity(0.06), radius: 12, y: 6)
+        .background(ThistleTheme.cardElevated, in: RoundedRectangle(cornerRadius: 22))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22)
+                .stroke(ThistleTheme.blossomPurple.opacity(0.08), lineWidth: 1)
+        }
+        .shadow(color: ThistleTheme.blossomPurple.opacity(0.08), radius: 12, y: 6)
     }
 }

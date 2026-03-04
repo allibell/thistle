@@ -21,6 +21,7 @@ struct MealsView: View {
             }
             .padding()
         }
+        .background(ThistleTheme.canvas.ignoresSafeArea())
         .navigationTitle("Meals")
         .sheet(isPresented: $showingBuilder) {
             MealBuilderView()
@@ -56,7 +57,7 @@ struct MealsView: View {
             .buttonStyle(.bordered)
         }
         .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
     }
 }
 
@@ -94,6 +95,8 @@ struct MealBuilderView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(ThistleTheme.canvas)
             .navigationTitle("New Meal")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

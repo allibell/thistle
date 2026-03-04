@@ -34,9 +34,9 @@ enum ComplianceRating: String, CaseIterable, Codable {
 
     var color: Color {
         switch self {
-        case .green: .green
-        case .yellow: .orange
-        case .red: .red
+        case .green: ThistleTheme.primaryGreen
+        case .yellow: ThistleTheme.warning
+        case .red: ThistleTheme.danger
         }
     }
 }
@@ -48,9 +48,9 @@ enum IngredientFlagSeverity: String, Codable {
 
     var color: Color {
         switch self {
-        case .good: .green
-        case .caution: .orange
-        case .avoid: .red
+        case .good: ThistleTheme.primaryGreen
+        case .caution: ThistleTheme.warning
+        case .avoid: ThistleTheme.danger
         }
     }
 
@@ -359,4 +359,64 @@ struct PersistedAppState: Codable {
     var meals: [SavedMeal]
     var loggedFoods: [LoggedFood]
     var usageCounts: [String: Int]
+    var searchCacheByQuery: [String: CachedProductList]
+    var barcodeCache: [String: CachedProductValue]
+    var deepSearchCache: [String: CachedProductValue]
+
+    init(
+        selectedDiet: DietProfile,
+        goals: MacroGoals,
+        cachedProducts: [Product],
+        meals: [SavedMeal],
+        loggedFoods: [LoggedFood],
+        usageCounts: [String: Int],
+        searchCacheByQuery: [String: CachedProductList] = [:],
+        barcodeCache: [String: CachedProductValue] = [:],
+        deepSearchCache: [String: CachedProductValue] = [:]
+    ) {
+        self.selectedDiet = selectedDiet
+        self.goals = goals
+        self.cachedProducts = cachedProducts
+        self.meals = meals
+        self.loggedFoods = loggedFoods
+        self.usageCounts = usageCounts
+        self.searchCacheByQuery = searchCacheByQuery
+        self.barcodeCache = barcodeCache
+        self.deepSearchCache = deepSearchCache
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case selectedDiet
+        case goals
+        case cachedProducts
+        case meals
+        case loggedFoods
+        case usageCounts
+        case searchCacheByQuery
+        case barcodeCache
+        case deepSearchCache
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        selectedDiet = try container.decodeIfPresent(DietProfile.self, forKey: .selectedDiet) ?? .whole30
+        goals = try container.decodeIfPresent(MacroGoals.self, forKey: .goals) ?? .default
+        cachedProducts = try container.decodeIfPresent([Product].self, forKey: .cachedProducts) ?? []
+        meals = try container.decodeIfPresent([SavedMeal].self, forKey: .meals) ?? []
+        loggedFoods = try container.decodeIfPresent([LoggedFood].self, forKey: .loggedFoods) ?? []
+        usageCounts = try container.decodeIfPresent([String: Int].self, forKey: .usageCounts) ?? [:]
+        searchCacheByQuery = try container.decodeIfPresent([String: CachedProductList].self, forKey: .searchCacheByQuery) ?? [:]
+        barcodeCache = try container.decodeIfPresent([String: CachedProductValue].self, forKey: .barcodeCache) ?? [:]
+        deepSearchCache = try container.decodeIfPresent([String: CachedProductValue].self, forKey: .deepSearchCache) ?? [:]
+    }
+}
+
+struct CachedProductList: Codable, Hashable {
+    var products: [Product]
+    var cachedAt: Date
+}
+
+struct CachedProductValue: Codable, Hashable {
+    var product: Product?
+    var cachedAt: Date
 }

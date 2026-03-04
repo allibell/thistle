@@ -41,9 +41,12 @@ final class AppStore: ObservableObject {
     private let catalogService: ProductCatalogServing
     private let deepSearchService: DeepSearchServing
     private let persistence: AppPersistence
+    private let catalogCacheTTL: TimeInterval = 60 * 60 * 24 * 7
+    private let deepSearchCacheTTL: TimeInterval = 60 * 60 * 24
     private var cancellables: Set<AnyCancellable> = []
-    private var searchCache: [String: [Product]] = [:]
-    private var barcodeCache: [String: Product?] = [:]
+    private var searchCache: [String: CachedProductList] = [:]
+    private var barcodeCache: [String: CachedProductValue] = [:]
+    private var deepSearchCache: [String: CachedProductValue] = [:]
 
     init(
         catalogService: ProductCatalogServing = ProductCatalogService(),
@@ -61,7 +64,11 @@ final class AppStore: ObservableObject {
             meals = state.meals
             loggedFoods = state.loggedFoods
             usageCounts = state.usageCounts
+            searchCache = state.searchCacheByQuery
+            barcodeCache = state.barcodeCache
+            deepSearchCache = state.deepSearchCache
         }
+        pruneExpiredCaches()
 
         setupPersistence()
     }
@@ -83,6 +90,38 @@ final class AppStore: ObservableObject {
         return candidates
             .filter(matchesFilters)
             .sorted { combinedRankingScore(for: $0) > combinedRankingScore(for: $1) }
+    }
+
+    var recentHistoryProducts: [Product] {
+        let catalogByID = Dictionary(uniqueKeysWithValues: localCatalog.map { ($0.id, $0) })
+        var ordered: [Product] = []
+        var seen: Set<String> = []
+
+        for entry in loggedFoods {
+            for productID in entry.sourceProductIDs {
+                guard seen.insert(productID).inserted, let product = catalogByID[productID] else { continue }
+                ordered.append(product)
+                if ordered.count >= 8 { return ordered }
+            }
+        }
+
+        if ordered.count < 8 {
+            let fallbackIDs = usageCounts
+                .filter { $0.value > 0 && !seen.contains($0.key) }
+                .sorted {
+                    if $0.value == $1.value { return $0.key < $1.key }
+                    return $0.value > $1.value
+                }
+                .map(\.key)
+
+            for productID in fallbackIDs {
+                guard let product = catalogByID[productID] else { continue }
+                ordered.append(product)
+                if ordered.count >= 8 { break }
+            }
+        }
+
+        return ordered
     }
 
     var searchResults: [Product] {
@@ -123,11 +162,16 @@ final class AppStore: ObservableObject {
         do {
             let cacheKey = normalizedSearchKey(for: trimmed)
             let products: [Product]
-            if let cached = searchCache[cacheKey] {
-                products = cached
+            if let cached = searchCache[cacheKey], isFresh(cached.cachedAt, ttl: catalogCacheTTL) {
+                products = cached.products
             } else {
                 products = try await catalogService.searchProducts(matching: trimmed)
-                searchCache[cacheKey] = products
+                if !products.isEmpty {
+                    searchCache[cacheKey] = CachedProductList(products: products, cachedAt: .now)
+                    persistState()
+                } else {
+                    searchCache[cacheKey] = nil
+                }
             }
             remoteSearchResults = products
             mergeIntoCache(products)
@@ -160,13 +204,17 @@ final class AppStore: ObservableObject {
             return
         }
 
-        if let cachedVariant = variants.first(where: { barcodeCache.keys.contains($0) }) {
-            let cached = barcodeCache[cachedVariant] ?? nil
-            barcodeLookupResult = cached
-            if cached == nil {
-                barcodeLookupError = "No product found for barcode \(trimmed)."
+        if let cachedVariant = variants.first(where: { barcodeCache.keys.contains($0) }),
+           let cached = barcodeCache[cachedVariant] {
+            if isFresh(cached.cachedAt, ttl: catalogCacheTTL) {
+                barcodeLookupResult = cached.product
+                if cached.product == nil {
+                    barcodeLookupError = "No product found for barcode \(trimmed)."
+                }
+                return
             }
-            return
+            barcodeCache[cachedVariant] = nil
+            persistState()
         }
 
         isLookingUpBarcode = true
@@ -175,8 +223,9 @@ final class AppStore: ObservableObject {
         do {
             let fetched = try await catalogService.product(forBarcode: trimmed)
             for variant in variants {
-                barcodeCache[variant] = fetched
+                barcodeCache[variant] = CachedProductValue(product: fetched, cachedAt: .now)
             }
+            persistState()
             if let fetched {
                 mergeIntoCache([fetched])
                 barcodeLookupResult = fetched
@@ -226,6 +275,32 @@ final class AppStore: ObservableObject {
     func enrich(product: Product, scope: DeepSearchScope) async {
         resetDeepSearchDebugLog()
         pendingDeepSearchProposal = nil
+        let cacheKey = deepSearchProductCacheKey(for: product, scope: scope)
+        if let cached = deepSearchCache[cacheKey], isFresh(cached.cachedAt, ttl: deepSearchCacheTTL) {
+            appendDeepSearchLog("Using cached deep search candidate for \(product.name) [scope: \(scope.rawValue)].")
+            if let cachedCandidate = cached.product {
+                guard let proposal = buildDeepSearchProposal(for: product, candidate: cachedCandidate, scope: scope) else {
+                    appendDeepSearchLog("Cached candidate was rejected by quality checks. Continuing with live deep search.")
+                    deepSearchCache[cacheKey] = nil
+                    persistState()
+                    return await runLiveDeepSearchEnrichment(for: product, scope: scope, cacheKey: cacheKey)
+                }
+                pendingDeepSearchProposal = proposal
+                appendDeepSearchLog("Prepared a pending update with \(proposal.changedFields.count) field change(s).")
+                appendDeepSearchLog("Waiting for manual approval before applying.")
+                return
+            } else {
+                appendDeepSearchLog("Cached deep search miss for this product and scope. Continuing with live deep search.")
+                deepSearchCache[cacheKey] = nil
+                persistState()
+                return await runLiveDeepSearchEnrichment(for: product, scope: scope, cacheKey: cacheKey)
+            }
+        }
+
+        await runLiveDeepSearchEnrichment(for: product, scope: scope, cacheKey: cacheKey)
+    }
+
+    private func runLiveDeepSearchEnrichment(for product: Product, scope: DeepSearchScope, cacheKey: String) async {
         isDeepSearching = true
         activeDeepSearchProductID = product.id
         activeDeepSearchScope = scope
@@ -238,11 +313,22 @@ final class AppStore: ObservableObject {
 
         do {
             appendDeepSearchLog("Querying fallback sources.")
+            if !product.hasIngredientDetails, scope == .all || scope == .ingredients {
+                appendDeepSearchLog("Missing ingredients detected: deep search will run an additional slow OCR image pass.")
+            }
             guard let enriched = try await deepSearchService.deepSearchProduct(for: product, scope: scope) else {
+                deepSearchCache[cacheKey] = CachedProductValue(product: nil, cachedAt: .now)
+                persistState()
                 appendDeepSearchLog("Deep search found no candidate.")
                 return
             }
+            deepSearchCache[cacheKey] = CachedProductValue(product: enriched, cachedAt: .now)
+            persistState()
             appendDeepSearchLog("Deep search found a candidate: \(enriched.name).")
+            if !enriched.hasIngredientDetails, !product.hasIngredientDetails, scope == .all || scope == .ingredients {
+                appendDeepSearchLog("OCR fallback completed but still could not extract ingredient text from candidate sources.")
+                appendDeepSearchLog("Final AI fallback is wired but currently disabled until API keys/provider are configured.")
+            }
             guard let proposal = buildDeepSearchProposal(for: product, candidate: enriched, scope: scope) else {
                 appendDeepSearchLog("Rejected candidate because it did not look like a confident match or did not add useful missing data.")
                 return
@@ -352,8 +438,17 @@ final class AppStore: ObservableObject {
         ]
         .joined(separator: " ")
         .lowercased()
+        let haystackTerms = normalizedTerms(for: haystack)
 
-        return queryTerms.allSatisfy(haystack.contains)
+        return queryTerms.allSatisfy { term in
+            if haystack.contains(term) {
+                return true
+            }
+
+            return haystackTerms.contains { candidate in
+                isFuzzyTokenMatch(query: term, candidate: candidate)
+            }
+        }
     }
 
     private func normalizedTerms(for string: String) -> [String] {
@@ -361,6 +456,39 @@ final class AppStore: ObservableObject {
             .lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { $0.count >= 2 }
+    }
+
+    private func isFuzzyTokenMatch(query: String, candidate: String) -> Bool {
+        let lengthGap = abs(query.count - candidate.count)
+        if lengthGap > 2 { return false }
+
+        let distance = levenshteinDistance(query, candidate)
+        if query.count <= 5 {
+            return distance <= 1
+        }
+        return distance <= 2
+    }
+
+    private func levenshteinDistance(_ lhs: String, _ rhs: String) -> Int {
+        let lhsChars = Array(lhs)
+        let rhsChars = Array(rhs)
+
+        if lhsChars.isEmpty { return rhsChars.count }
+        if rhsChars.isEmpty { return lhsChars.count }
+
+        var previousRow = Array(0...rhsChars.count)
+        for (i, lhsChar) in lhsChars.enumerated() {
+            var currentRow = [i + 1]
+            for (j, rhsChar) in rhsChars.enumerated() {
+                let insertion = currentRow[j] + 1
+                let deletion = previousRow[j + 1] + 1
+                let substitution = previousRow[j] + (lhsChar == rhsChar ? 0 : 1)
+                currentRow.append(min(insertion, deletion, substitution))
+            }
+            previousRow = currentRow
+        }
+
+        return previousRow[rhsChars.count]
     }
 
     private func combinedRankingScore(for product: Product) -> Int {
@@ -441,6 +569,14 @@ final class AppStore: ObservableObject {
         normalizedTerms(for: query).joined(separator: " ")
     }
 
+    private func deepSearchQueryCacheKey(for query: String) -> String {
+        "query:\(normalizedSearchKey(for: query))"
+    }
+
+    private func deepSearchProductCacheKey(for product: Product, scope: DeepSearchScope) -> String {
+        "product:\(product.id):\(scope.rawValue)"
+    }
+
     private func productQualityScore(for product: Product) -> Int {
         product.dataCompletenessScore * 6
     }
@@ -448,6 +584,22 @@ final class AppStore: ObservableObject {
     private func runDeepSearch(for query: String) async {
         resetDeepSearchDebugLog()
         pendingDeepSearchProposal = nil
+        let cacheKey = deepSearchQueryCacheKey(for: query)
+        if let cached = deepSearchCache[cacheKey], isFresh(cached.cachedAt, ttl: deepSearchCacheTTL) {
+            if let cachedProduct = cached.product {
+                deepSearchResult = cachedProduct
+                mergeIntoCache([cachedProduct])
+                searchError = nil
+                appendDeepSearchLog("Used cached deep search result for query: \(query)")
+                return
+            }
+            appendDeepSearchLog("Used cached deep search miss for query: \(query)")
+            if remoteSearchResults.isEmpty, localProductResults.isEmpty, matchingMeals.isEmpty {
+                searchError = "No matching foods found, including deep search."
+            }
+            return
+        }
+
         isDeepSearching = true
         activeDeepSearchProductID = nil
         activeDeepSearchScope = .all
@@ -461,16 +613,20 @@ final class AppStore: ObservableObject {
         do {
             appendDeepSearchLog("Querying fallback sources.")
             if let enriched = try await deepSearchService.deepSearchProduct(matching: query) {
+                deepSearchCache[cacheKey] = CachedProductValue(product: enriched, cachedAt: .now)
                 deepSearchResult = enriched
                 mergeIntoCache([enriched])
                 searchError = nil
                 appendDeepSearchLog("Deep search found and cached: \(enriched.name)")
             } else if remoteSearchResults.isEmpty, localProductResults.isEmpty, matchingMeals.isEmpty {
+                deepSearchCache[cacheKey] = CachedProductValue(product: nil, cachedAt: .now)
                 searchError = "No matching foods found, including deep search."
                 appendDeepSearchLog("Deep search completed with no match.")
             } else {
+                deepSearchCache[cacheKey] = CachedProductValue(product: nil, cachedAt: .now)
                 appendDeepSearchLog("Deep search completed but did not improve current results.")
             }
+            persistState()
         } catch {
             if remoteSearchResults.isEmpty, localProductResults.isEmpty, matchingMeals.isEmpty {
                 searchError = "No matching foods found, and deep search failed."
@@ -516,6 +672,8 @@ final class AppStore: ObservableObject {
     private func buildDeepSearchProposal(for product: Product, candidate: Product, scope: DeepSearchScope) -> DeepSearchProposal? {
         let merged = merge(product: product, with: candidate, scope: scope)
         let changedFields = diffFields(from: product, to: merged)
+        appendDeepSearchLog(candidateDebugSummary(candidate))
+        appendDeepSearchLog("Candidate proposed changes: \(changedFieldsSummary(changedFields)).")
 
         guard !changedFields.isEmpty else {
             appendDeepSearchLog("Rejected candidate because it would not change any fields.")
@@ -528,7 +686,7 @@ final class AppStore: ObservableObject {
             return nil
         }
 
-        let match = evaluateDeepSearchMatch(existing: product, candidate: candidate)
+        let match = evaluateDeepSearchMatch(existing: product, candidate: candidate, scope: scope, changedFields: changedFields)
         for reason in match.reasons {
             appendDeepSearchLog(reason)
         }
@@ -652,24 +810,35 @@ final class AppStore: ObservableObject {
         return diffs
     }
 
-    private func evaluateDeepSearchMatch(existing: Product, candidate: Product) -> (accepted: Bool, score: Int, reasons: [String]) {
+    private func evaluateDeepSearchMatch(
+        existing: Product,
+        candidate: Product,
+        scope: DeepSearchScope,
+        changedFields: [DeepSearchFieldDiff]
+    ) -> (accepted: Bool, score: Int, reasons: [String]) {
         var score = 0
         var reasons: [String] = []
 
         let existingBarcode = BarcodeNormalizer.digitsOnly(from: existing.barcode)
         let candidateBarcode = BarcodeNormalizer.digitsOnly(from: candidate.barcode)
         let barcodeVariants = Set(BarcodeNormalizer.variants(for: existingBarcode))
+        let hasExistingBarcode = !existingBarcode.isEmpty
 
-        if !existingBarcode.isEmpty, !candidateBarcode.isEmpty {
-            if barcodeVariants.contains(candidateBarcode) {
-                score += 100
-                reasons.append("Barcode matched exactly or via normalized variant.")
-            } else {
-                score -= 120
-                reasons.append("Barcode mismatch: existing \(existingBarcode), candidate \(candidateBarcode).")
+        if hasExistingBarcode {
+            guard !candidateBarcode.isEmpty else {
+                reasons.append("Barcode required for approval: existing item has barcode \(existingBarcode), candidate has none.")
+                return (false, -200, reasons)
             }
+
+            guard barcodeVariants.contains(candidateBarcode) else {
+                reasons.append("Barcode mismatch: existing \(existingBarcode), candidate \(candidateBarcode).")
+                return (false, -200, reasons)
+            }
+
+            score += 120
+            reasons.append("Barcode matched exactly or via normalized variant.")
         } else {
-            reasons.append("No barcode match available, falling back to name/brand/macros.")
+            reasons.append("Existing item has no barcode, using fallback name/brand/macros matching.")
         }
 
         let nameOverlap = overlapScore(lhs: existing.name, rhs: candidate.name)
@@ -678,8 +847,9 @@ final class AppStore: ObservableObject {
 
         let existingBrand = normalizedComparableText(existing.brand)
         let candidateBrand = normalizedComparableText(candidate.brand)
+        var brandOverlap: Double = 0
         if !existingBrand.isEmpty, existing.brand != "Unknown Brand", !candidateBrand.isEmpty, candidate.brand != "Unknown Brand" {
-            let brandOverlap = overlapScore(lhs: existing.brand, rhs: candidate.brand)
+            brandOverlap = overlapScore(lhs: existing.brand, rhs: candidate.brand)
             score += Int((brandOverlap - 0.5) * 40)
             reasons.append("Brand overlap score: \(Int((brandOverlap * 100).rounded()))%.")
         }
@@ -692,9 +862,45 @@ final class AppStore: ObservableObject {
             reasons.append("Macro comparison skipped because one side lacks nutrition.")
         }
 
-        let hasStrongIdentityMatch = (!existingBarcode.isEmpty && barcodeVariants.contains(candidateBarcode)) || nameOverlap >= 0.75
+        if !hasExistingBarcode, existing.hasMeaningfulNutrition {
+            guard candidate.hasMeaningfulNutrition else {
+                reasons.append("Fallback match rejected: existing item has macros but candidate does not.")
+                return (false, -150, reasons)
+            }
+
+            let fallbackMacroCheck = macroDifferenceScore(lhs: existing.nutrition, rhs: candidate.nutrition)
+            let fillsIngredients = changedFields.contains { $0.kind == .ingredients && $0.addsMissingData }
+            let ingredientTargeted = scope == .ingredients || scope == .all
+            if fallbackMacroCheck.scoreAdjustment < 5, !(fillsIngredients && ingredientTargeted && nameOverlap >= 0.65) {
+                reasons.append("Fallback match rejected: macro alignment too weak without barcode.")
+                return (false, -150, reasons)
+            }
+            if fallbackMacroCheck.scoreAdjustment < 5, fillsIngredients && ingredientTargeted && nameOverlap >= 0.65 {
+                reasons.append("Accepted weaker macro alignment because candidate fills missing ingredients with strong name overlap.")
+            }
+        }
+
+        let hasStrongIdentityMatch: Bool
+        if hasExistingBarcode {
+            hasStrongIdentityMatch = true
+        } else {
+            hasStrongIdentityMatch = nameOverlap >= 0.75 || (nameOverlap >= 0.65 && brandOverlap >= 0.5)
+        }
+
         let accepted = hasStrongIdentityMatch && score >= 20
         return (accepted, score, reasons)
+    }
+
+    private func candidateDebugSummary(_ candidate: Product) -> String {
+        "Candidate snapshot -> name: \(candidate.name), brand: \(candidate.brand), ingredients: \(candidate.ingredients.count), macros: \(summarizeNutrition(candidate.nutrition)), stores: \(candidate.stores.isEmpty ? "none" : candidate.stores.joined(separator: ", ")), barcode: \(valueOrPlaceholder(candidate.barcode))."
+    }
+
+    private func changedFieldsSummary(_ fields: [DeepSearchFieldDiff]) -> String {
+        guard !fields.isEmpty else { return "none" }
+        return fields.map { field in
+            let changeType = field.addsMissingData ? "fills missing" : "changes existing"
+            return "\(field.label): \(changeType)"
+        }.joined(separator: " | ")
     }
 
     private func overlapScore(lhs: String, rhs: String) -> Double {
@@ -774,6 +980,7 @@ final class AppStore: ObservableObject {
     }
 
     private func persistState() {
+        pruneExpiredCaches()
         persistence.save(
             PersistedAppState(
                 selectedDiet: selectedDiet,
@@ -781,9 +988,22 @@ final class AppStore: ObservableObject {
                 cachedProducts: cachedProducts,
                 meals: meals,
                 loggedFoods: loggedFoods,
-                usageCounts: usageCounts
+                usageCounts: usageCounts,
+                searchCacheByQuery: searchCache,
+                barcodeCache: barcodeCache,
+                deepSearchCache: deepSearchCache
             )
         )
+    }
+
+    private func pruneExpiredCaches() {
+        searchCache = searchCache.filter { isFresh($0.value.cachedAt, ttl: catalogCacheTTL) }
+        barcodeCache = barcodeCache.filter { isFresh($0.value.cachedAt, ttl: catalogCacheTTL) }
+        deepSearchCache = deepSearchCache.filter { isFresh($0.value.cachedAt, ttl: deepSearchCacheTTL) }
+    }
+
+    private func isFresh(_ timestamp: Date, ttl: TimeInterval) -> Bool {
+        Date().timeIntervalSince(timestamp) <= ttl
     }
 
     private func resetDeepSearchDebugLog() {

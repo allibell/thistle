@@ -2,6 +2,9 @@ import SwiftUI
 
 struct GoalsView: View {
     @EnvironmentObject private var store: AppStore
+    @State private var draftProteinPercent = 0
+    @State private var draftCarbPercent = 0
+    @State private var draftFatPercent = 0
 
     var body: some View {
         Form {
@@ -20,61 +23,64 @@ struct GoalsView: View {
             Section("Macro Split") {
                 macroEditor(
                     title: "Protein",
-                    color: .red,
-                    percent: store.goals.proteinPercent,
-                    grams: store.goals.protein,
-                    remainingAllowance: 100 - store.goals.carbPercent - store.goals.fatPercent
-                ) { store.setMacroPercents(protein: $0, carbs: store.goals.carbPercent, fat: store.goals.fatPercent) }
+                    color: ThistleTheme.blossomPink,
+                    percent: $draftProteinPercent,
+                    grams: grams(forPercent: draftProteinPercent, caloriesPerGram: 4)
+                )
 
                 macroEditor(
                     title: "Carbs",
-                    color: .blue,
-                    percent: store.goals.carbPercent,
-                    grams: store.goals.carbs,
-                    remainingAllowance: 100 - store.goals.proteinPercent - store.goals.fatPercent
-                ) { store.setMacroPercents(protein: store.goals.proteinPercent, carbs: $0, fat: store.goals.fatPercent) }
+                    color: ThistleTheme.blossomPurple,
+                    percent: $draftCarbPercent,
+                    grams: grams(forPercent: draftCarbPercent, caloriesPerGram: 4)
+                )
 
                 macroEditor(
                     title: "Fat",
-                    color: .orange,
-                    percent: store.goals.fatPercent,
-                    grams: store.goals.fat,
-                    remainingAllowance: 100 - store.goals.proteinPercent - store.goals.carbPercent
-                ) { store.setMacroPercents(protein: store.goals.proteinPercent, carbs: store.goals.carbPercent, fat: $0) }
+                    color: ThistleTheme.stemGreen,
+                    percent: $draftFatPercent,
+                    grams: grams(forPercent: draftFatPercent, caloriesPerGram: 9)
+                )
 
                 HStack {
-                    Text("Assigned")
+                    Text("Allocated")
                     Spacer()
-                    Text("\(store.goals.proteinPercent + store.goals.carbPercent + store.goals.fatPercent)%")
-                        .foregroundStyle(totalPercent == 100 ? .green : .secondary)
+                    Text("\(totalPercent)%")
+                        .foregroundStyle(totalPercent == 100 ? ThistleTheme.primaryGreen : ThistleTheme.danger)
                 }
 
-                if totalPercent < 100 {
-                    HStack {
-                        Text("Unassigned")
-                        Spacer()
-                        Text("\(100 - totalPercent)%")
-                            .foregroundStyle(.secondary)
-                    }
+                if totalPercent != 100 {
+                    Text("Macros must total 100% before saving.")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(ThistleTheme.danger)
                 }
+
+                Button("Set Macro Goals") {
+                    store.setMacroPercents(protein: draftProteinPercent, carbs: draftCarbPercent, fat: draftFatPercent)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(totalPercent != 100)
             }
 
             Section("Daily Targets") {
                 MacroSummaryView(
                     nutrition: NutritionFacts(
                         calories: store.goals.calories,
-                        protein: store.goals.protein,
-                        carbs: store.goals.carbs,
-                        fat: store.goals.fat
+                        protein: grams(forPercent: draftProteinPercent, caloriesPerGram: 4),
+                        carbs: grams(forPercent: draftCarbPercent, caloriesPerGram: 4),
+                        fat: grams(forPercent: draftFatPercent, caloriesPerGram: 9)
                     )
                 )
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(ThistleTheme.canvas)
         .navigationTitle("Goals")
+        .onAppear(perform: syncDraftFromStore)
     }
 
     private var totalPercent: Int {
-        store.goals.proteinPercent + store.goals.carbPercent + store.goals.fatPercent
+        draftProteinPercent + draftCarbPercent + draftFatPercent
     }
 
     private func goalsBinding<Value>(_ keyPath: WritableKeyPath<MacroGoals, Value>) -> Binding<Value> {
@@ -87,28 +93,37 @@ struct GoalsView: View {
     private func macroEditor(
         title: String,
         color: Color,
-        percent: Int,
-        grams: Double,
-        remainingAllowance: Int,
-        onChange: @escaping (Int) -> Void
+        percent: Binding<Int>,
+        grams: Double
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(title)
                 Spacer()
-                Text("\(percent)% • \(Int(grams.rounded()))g")
+                Text("\(percent.wrappedValue)% • \(Int(grams.rounded()))g")
                     .foregroundStyle(.secondary)
             }
 
             Slider(
                 value: Binding(
-                    get: { Double(percent) },
-                    set: { onChange(min(Int($0.rounded()), max(remainingAllowance, percent))) }
+                    get: { Double(percent.wrappedValue) },
+                    set: { percent.wrappedValue = Int($0.rounded()) }
                 ),
-                in: 0...Double(max(remainingAllowance, percent)),
+                in: 0...100,
                 step: 1
             )
             .tint(color)
         }
+    }
+
+    private func syncDraftFromStore() {
+        draftProteinPercent = store.goals.proteinPercent
+        draftCarbPercent = store.goals.carbPercent
+        draftFatPercent = store.goals.fatPercent
+    }
+
+    private func grams(forPercent percent: Int, caloriesPerGram: Double) -> Double {
+        let allocatedCalories = (Double(store.goals.calories) * Double(percent)) / 100
+        return allocatedCalories / caloriesPerGram
     }
 }

@@ -20,6 +20,7 @@ struct DiaryView: View {
             }
             .padding()
         }
+        .background(ThistleTheme.canvas.ignoresSafeArea())
         .navigationTitle("Diary")
     }
 
@@ -36,7 +37,7 @@ struct DiaryView: View {
             progressRow(label: "Fat", current: store.todayNutrition.fat, goal: store.goals.fat)
         }
         .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
     }
 
     private var emptyState: some View {
@@ -48,7 +49,7 @@ struct DiaryView: View {
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
     }
 
     private func diaryCard(entry: LoggedFood) -> some View {
@@ -73,7 +74,7 @@ struct DiaryView: View {
             }
         }
         .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
     }
 
     private func progressRow(label: String, current: Double, goal: Double) -> some View {
@@ -86,7 +87,7 @@ struct DiaryView: View {
                     .foregroundStyle(.secondary)
             }
             ProgressView(value: progress)
-                .tint(progress >= 1 ? .green : .accentColor)
+                .tint(progress >= 1 ? ThistleTheme.primaryGreen : .accentColor)
         }
     }
 }
