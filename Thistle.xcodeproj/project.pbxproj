@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		11578C2D81FC6ECC990F9E21 /* MealsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D31C97555E7FEA256B10086 /* MealsView.swift */; };
 		12B9BA9B110F85A1826F4F17 /* DiaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D869E5234B4DF4CD04D85215 /* DiaryView.swift */; };
+		160ACEE0AAB38895869568FF /* ThistleTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65A8744EEBED47326C4FF0C1 /* ThistleTheme.swift */; };
 		1B15392BA8A61437081324CF /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A7763A456EC44FA70066F77 /* RootTabView.swift */; };
 		33B926E56A34904D0DB23A6B /* ProductDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1B0326532AA2A269E54964B /* ProductDetailView.swift */; };
 		568BAB695AE0EA0E0E20AA0B /* SampleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 588DE83D1ABF96A3BC4E5D43 /* SampleData.swift */; };
@@ -22,11 +23,13 @@
 		A6F97033B700B2D0DD8C8CE4 /* GoalsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED20BDA66DA7EF678260FD2 /* GoalsView.swift */; };
 		A99FFD6565F9EBA07F8F9F32 /* DeepSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA6526FB9CE2F1EF6A3353FD /* DeepSearchService.swift */; };
 		C7F3E881A7B9DE38A33B21B4 /* BarcodeNormalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF7AE872E0A4224A5DB4BFF /* BarcodeNormalizer.swift */; };
+		CA12053F911504C27FCE6579 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 00DEA0FA2BC3DBDD903C07A5 /* Assets.xcassets */; };
 		D2A1080F4E1C83D0C24F56E8 /* NutritionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FF5B9402859F0DDC532FB62 /* NutritionModels.swift */; };
 		EF3A8F74820EACDAB57C9ABD /* ThistleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B66191DC097214D5BD3030CD /* ThistleApp.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		00DEA0FA2BC3DBDD903C07A5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		01E0DA4A7BB4DDDA1D9A2E76 /* AppPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPersistence.swift; sourceTree = "<group>"; };
 		0A7763A456EC44FA70066F77 /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
 		0D31C97555E7FEA256B10086 /* MealsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealsView.swift; sourceTree = "<group>"; };
@@ -34,6 +37,7 @@
 		38199B819F7E976E29D764A6 /* Thistle.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Thistle.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3ED20BDA66DA7EF678260FD2 /* GoalsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalsView.swift; sourceTree = "<group>"; };
 		588DE83D1ABF96A3BC4E5D43 /* SampleData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleData.swift; sourceTree = "<group>"; };
+		65A8744EEBED47326C4FF0C1 /* ThistleTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThistleTheme.swift; sourceTree = "<group>"; };
 		66E084ED6470503586CEBA70 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
 		7604E154EAE49BC475E72FF0 /* ProductCatalogService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductCatalogService.swift; sourceTree = "<group>"; };
 		77AB5F1E109998E866B1A422 /* SharedViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedViews.swift; sourceTree = "<group>"; };
@@ -48,6 +52,14 @@
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
+		057AC9DE11044D6BF067DFA9 /* ThistleApp */ = {
+			isa = PBXGroup;
+			children = (
+				00DEA0FA2BC3DBDD903C07A5 /* Assets.xcassets */,
+			);
+			path = ThistleApp;
+			sourceTree = "<group>";
+		};
 		2F228E8C308B22285D09E6C5 /* Models */ = {
 			isa = PBXGroup;
 			children = (
@@ -104,6 +116,7 @@
 			isa = PBXGroup;
 			children = (
 				6E4DEE9018A6E22001C3805F /* Sources */,
+				057AC9DE11044D6BF067DFA9 /* ThistleApp */,
 				62F96597826FE22352B4AEE4 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -125,6 +138,7 @@
 			isa = PBXGroup;
 			children = (
 				B66191DC097214D5BD3030CD /* ThistleApp.swift */,
+				65A8744EEBED47326C4FF0C1 /* ThistleTheme.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -137,6 +151,7 @@
 			buildConfigurationList = 02A0064B45E867C7835C9FEF /* Build configuration list for PBXNativeTarget "Thistle" */;
 			buildPhases = (
 				2D0EEB6BEFFF94A744020DB8 /* Sources */,
+				654F5AED03F3959DEA5E7FCE /* Resources */,
 			);
 			buildRules = (
 			);
@@ -176,6 +191,17 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		654F5AED03F3959DEA5E7FCE /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CA12053F911504C27FCE6579 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		2D0EEB6BEFFF94A744020DB8 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -198,6 +224,7 @@
 				67FC26E5C97F6BE8B706E4A7 /* SearchView.swift in Sources */,
 				706970B38D5DC812705FD29E /* SharedViews.swift in Sources */,
 				EF3A8F74820EACDAB57C9ABD /* ThistleApp.swift in Sources */,
+				160ACEE0AAB38895869568FF /* ThistleTheme.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
