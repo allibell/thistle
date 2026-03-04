@@ -215,22 +215,37 @@ struct SearchView: View {
 
     private var brandTitleFont: Font {
 #if canImport(UIKit)
-        if UIFont(name: "BitcountInk-Regular", size: 34) != nil {
-            return .custom("BitcountInk-Regular", size: 34)
+        if let fontName = firstAvailableFontName(containingAnyOf: ["bitcount ink", "bitcount"]) {
+            return .custom(fontName, size: 35)
         }
-        if UIFont(name: "BitcountInk", size: 34) != nil {
-            return .custom("BitcountInk", size: 34)
+        if let fontName = firstAvailableFontName(containingAnyOf: ["nabla"]) {
+            return .custom(fontName, size: 35)
         }
-        if UIFont(name: "Bitcount-Ink", size: 34) != nil {
-            return .custom("Bitcount-Ink", size: 34)
+        if let fontName = firstAvailableFontName(containingAnyOf: ["unica one", "unicaone"]) {
+            return .custom(fontName, size: 35)
         }
-        if UIFont(name: "Sora-SemiBold", size: 34) != nil {
-            return .custom("Sora-SemiBold", size: 34)
+        if let fontName = firstAvailableFontName(containingAnyOf: ["sora"]) {
+            return .custom(fontName, size: 35)
         }
-        if UIFont(name: "Quicksand-SemiBold", size: 34) != nil {
-            return .custom("Quicksand-SemiBold", size: 34)
+        if let fontName = firstAvailableFontName(containingAnyOf: ["quicksand"]) {
+            return .custom(fontName, size: 35)
         }
 #endif
-        return .system(size: 33, weight: .semibold, design: .rounded)
+        return .system(size: 34, weight: .semibold, design: .rounded)
     }
+
+#if canImport(UIKit)
+    private func firstAvailableFontName(containingAnyOf terms: [String]) -> String? {
+        let allFontNames = UIFont.familyNames.flatMap { family in
+            UIFont.fontNames(forFamilyName: family)
+        }
+
+        for term in terms {
+            if let match = allFontNames.first(where: { $0.lowercased().contains(term) }) {
+                return match
+            }
+        }
+        return nil
+    }
+#endif
 }

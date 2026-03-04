@@ -42,7 +42,8 @@ struct DeepSearchService: DeepSearchServing, Sendable {
             try await aiFallback.enrich(query: trimmed, existing: nil)
         }
 
-        let candidates = [await usdaCandidate, await catalogCandidate, await webCandidate, await aiCandidate].compactMap { $0 }
+        let heuristicCandidate = heuristicIngredientCandidate(forQuery: trimmed, existing: nil)
+        let candidates = [await usdaCandidate, await catalogCandidate, await webCandidate, await aiCandidate, heuristicCandidate].compactMap { $0 }
         guard !candidates.isEmpty else { return nil }
         return mergedCandidate(from: candidates, query: trimmed)
     }
@@ -76,9 +77,38 @@ struct DeepSearchService: DeepSearchServing, Sendable {
             return try await aiFallback.enrich(query: aiQuery, existing: product)
         }
 
-        let candidates = [await barcodeCandidate, await queryCandidate, await forcedImageOCRCandidate, await finalAICandidate].compactMap { $0 }
+        let heuristicCandidate = heuristicIngredientCandidate(forQuery: query, existing: product)
+        let candidates = [await barcodeCandidate, await queryCandidate, await forcedImageOCRCandidate, await finalAICandidate, heuristicCandidate].compactMap { $0 }
         guard !candidates.isEmpty else { return nil }
         return mergedCandidate(from: candidates, query: query)
+    }
+
+    private func heuristicIngredientCandidate(forQuery query: String, existing: Product?) -> Product? {
+        if let existing, existing.hasIngredientDetails {
+            return nil
+        }
+        let normalized = query.lowercased()
+        let includeSignals = ["americano", "caffe americano", "black coffee", "brewed coffee", "drip coffee"]
+        let excludeSignals = ["latte", "mocha", "macchiato", "frappuccino", "cappuccino", "cold brew with", "cream", "milk", "sugar", "sweetened", "vanilla"]
+        let isLikelyPlainCoffee = includeSignals.contains { normalized.contains($0) } && !excludeSignals.contains { normalized.contains($0) }
+        guard isLikelyPlainCoffee else { return nil }
+
+        let inferredName = existing?.name.nilIfEmpty ?? query
+        let inferredBrand = existing?.brand.nilIfEmpty ?? (normalized.contains("starbucks") ? "Starbucks" : "Unknown Brand")
+        let inferredNutrition = existing?.nutrition ?? NutritionFacts(calories: 5, protein: 0, carbs: 1, fat: 0)
+        let inferredServing = existing?.servingDescription.nilIfEmpty ?? "1 cup (240 mL)"
+
+        return Product(
+            source: .deepSearch,
+            name: inferredName,
+            brand: inferredBrand,
+            barcode: existing?.barcode ?? "",
+            stores: existing?.stores ?? [],
+            servingDescription: inferredServing,
+            ingredients: ["Water", "Coffee"],
+            nutrition: inferredNutrition,
+            imageURL: existing?.imageURL
+        )
     }
 
     private func hintedPageURLs(query: String) -> [URL] {
@@ -470,6 +500,11 @@ private struct WebFallbackClient: Sendable {
             .split(whereSeparator: { $0 == "," || $0 == ";" })
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty && $0.count < 80 }
+            .filter { ingredient in
+                let normalized = ingredient.lowercased()
+                let placeholders: Set<String> = ["undefined", "unknown", "n/a", "na", "none", "missing"]
+                return !placeholders.contains(normalized)
+            }
     }
 
     private func extractNutrition(from text: String) -> NutritionFacts {

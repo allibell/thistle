@@ -116,3 +116,16 @@ struct ProductCard: View {
         .shadow(color: ThistleTheme.blossomPurple.opacity(0.08), radius: 12, y: 6)
     }
 }
+
+extension View {
+    func thistleNavigationTitle(_ title: String) -> some View {
+        navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(title)
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(ThistleTheme.blossomPurple)
+                }
+            }
+    }
+}

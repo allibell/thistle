@@ -127,9 +127,46 @@ final class AppStore: ObservableObject {
     var searchResults: [Product] {
         let combined = deduplicatedProductsByID(localProductResults + remoteSearchResults + (deepSearchResult.map { [$0] } ?? []))
         return combined
-            .filter { !$0.isLowConfidenceCatalogEntry || !$0.ingredients.isEmpty }
+            .filter(shouldSurfaceSearchResult)
             .filter(matchesFilters)
             .sorted { combinedRankingScore(for: $0) > combinedRankingScore(for: $1) }
+    }
+
+    private func shouldSurfaceSearchResult(_ product: Product) -> Bool {
+        if !product.isLowConfidenceCatalogEntry || !product.ingredients.isEmpty {
+            return true
+        }
+
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
+            return false
+        }
+
+        let normalizedQuery = trimmedQuery.lowercased()
+        let identity = "\(product.brand) \(product.name)".lowercased()
+        if identity.contains(normalizedQuery) {
+            return true
+        }
+
+        let queryTerms = Set(normalizedTerms(for: trimmedQuery))
+        guard !queryTerms.isEmpty else {
+            return false
+        }
+
+        let identityTerms = Set(normalizedTerms(for: identity))
+        let overlap = queryTerms.intersection(identityTerms).count
+
+        if overlap == queryTerms.count {
+            return true
+        }
+
+        if queryTerms.count >= 2,
+           overlap >= queryTerms.count - 1,
+           product.hasMeaningfulNutrition || !product.brand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+
+        return false
     }
 
     var matchingMeals: [SavedMeal] {
@@ -161,26 +198,40 @@ final class AppStore: ObservableObject {
 
         do {
             let cacheKey = normalizedSearchKey(for: trimmed)
-            let products: [Product]
             if let cached = searchCache[cacheKey], isFresh(cached.cachedAt, ttl: catalogCacheTTL) {
-                products = cached.products
-            } else {
-                products = try await catalogService.searchProducts(matching: trimmed)
-                if !products.isEmpty {
-                    searchCache[cacheKey] = CachedProductList(products: products, cachedAt: .now)
-                    persistState()
-                } else {
-                    searchCache[cacheKey] = nil
+                remoteSearchResults = cached.products
+                mergeIntoCache(cached.products)
+                if cached.products.isEmpty, localProductResults.isEmpty, matchingMeals.isEmpty {
+                    searchError = "No matching foods found in your local library or the online catalog."
                 }
+                return
             }
+
+            if let stale = searchCache[cacheKey], !stale.products.isEmpty {
+                // Show stale results immediately, then refresh from network.
+                remoteSearchResults = stale.products
+                mergeIntoCache(stale.products)
+            }
+
+            let products = try await catalogService.searchProducts(matching: trimmed)
+            if !products.isEmpty {
+                searchCache[cacheKey] = CachedProductList(products: products, cachedAt: .now)
+                persistState()
+            } else {
+                searchCache[cacheKey] = nil
+            }
+
             remoteSearchResults = products
             mergeIntoCache(products)
             if products.isEmpty, localProductResults.isEmpty, matchingMeals.isEmpty {
                 searchError = "No matching foods found in your local library or the online catalog."
             }
         } catch {
-            remoteSearchResults = []
-            searchError = error.localizedDescription
+            if remoteSearchResults.isEmpty {
+                searchError = error.localizedDescription
+            } else {
+                searchError = "Showing cached results. Live catalog refresh failed."
+            }
         }
     }
 
@@ -892,7 +943,7 @@ final class AppStore: ObservableObject {
     }
 
     private func candidateDebugSummary(_ candidate: Product) -> String {
-        "Candidate snapshot -> name: \(candidate.name), brand: \(candidate.brand), ingredients: \(candidate.ingredients.count), macros: \(summarizeNutrition(candidate.nutrition)), stores: \(candidate.stores.isEmpty ? "none" : candidate.stores.joined(separator: ", ")), barcode: \(valueOrPlaceholder(candidate.barcode))."
+        "Candidate snapshot -> source: \(candidate.source.rawValue), name: \(candidate.name), brand: \(candidate.brand), ingredients: \(candidate.ingredients.count), macros: \(summarizeNutrition(candidate.nutrition)), stores: \(candidate.stores.isEmpty ? "none" : candidate.stores.joined(separator: ", ")), barcode: \(valueOrPlaceholder(candidate.barcode))."
     }
 
     private func changedFieldsSummary(_ fields: [DeepSearchFieldDiff]) -> String {

@@ -75,7 +75,7 @@ struct GoalsView: View {
         }
         .scrollContentBackground(.hidden)
         .background(ThistleTheme.canvas)
-        .navigationTitle("Goals")
+        .thistleNavigationTitle("Goals")
         .onAppear(perform: syncDraftFromStore)
     }
 

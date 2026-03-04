@@ -21,7 +21,7 @@ struct DiaryView: View {
             .padding()
         }
         .background(ThistleTheme.canvas.ignoresSafeArea())
-        .navigationTitle("Diary")
+        .thistleNavigationTitle("Diary")
     }
 
     private var progressSection: some View {

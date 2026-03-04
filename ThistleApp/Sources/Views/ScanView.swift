@@ -37,7 +37,7 @@ struct ScanView: View {
             .padding()
         }
         .background(ThistleTheme.canvas.ignoresSafeArea())
-        .navigationTitle("Scan")
+        .thistleNavigationTitle("Scan")
         .onChange(of: scannedCode) { _, newValue in
             guard let newValue else { return }
             Task { await store.lookupBarcode(newValue) }

@@ -25,7 +25,20 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
         guard trimmed.count >= 2 else {
             throw CatalogError.invalidQuery
         }
-        return try await openFoodFacts.searchProducts(matching: trimmed)
+
+        var aggregate: [Product] = []
+        let variants = queryVariants(for: trimmed)
+
+        for variant in variants {
+            let fetched = try await openFoodFacts.searchProducts(matching: variant)
+            if !fetched.isEmpty {
+                aggregate += fetched
+            }
+            if aggregate.count >= 24 { break }
+        }
+
+        let deduped = deduplicate(aggregate)
+        return deduped.sorted { rankingScore(for: $0, query: trimmed) > rankingScore(for: $1, query: trimmed) }
     }
 
     func product(forBarcode barcode: String) async throws -> Product? {
@@ -46,6 +59,68 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
 
         return nil
     }
+
+    private func queryVariants(for query: String) -> [String] {
+        let normalized = query.lowercased()
+        var variants: [String] = [query]
+
+        let terms = normalized
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count >= 2 }
+
+        if terms.count >= 2 {
+            variants.append(terms.joined(separator: " "))
+            variants.append("\(terms.first ?? "") \(terms.last ?? "")".trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+
+        if terms.count >= 3 {
+            variants.append("\(terms[0]) \(terms[1])")
+            variants.append("\(terms[0]) \(terms[2])")
+        }
+
+        if normalized.contains("malk"), !normalized.contains("milk") {
+            variants.append(query.replacingOccurrences(of: "malk", with: "malk milk", options: .caseInsensitive))
+            variants.append(query.replacingOccurrences(of: "malk", with: "malk organics", options: .caseInsensitive))
+        }
+
+        if normalized.contains("unsweetened"), normalized.contains("vanilla") {
+            variants.append(query.replacingOccurrences(of: "unsweetened", with: "", options: .caseInsensitive).replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespacesAndNewlines))
+            variants.append("\(query) almond milk")
+            variants.append("vanilla almond milk")
+        }
+
+        if normalized.contains("malk") {
+            variants.append("malk almond milk")
+            variants.append("malk vanilla almond milk")
+        }
+
+        return Array(NSOrderedSet(array: variants.compactMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty }).compactMap { $0 as? String })
+    }
+
+    private func deduplicate(_ products: [Product]) -> [Product] {
+        var byKey: [String: Product] = [:]
+        for product in products {
+            let key = product.canonicalLookupKey
+            if let existing = byKey[key] {
+                byKey[key] = product.dataCompletenessScore >= existing.dataCompletenessScore ? product : existing
+            } else {
+                byKey[key] = product
+            }
+        }
+        return Array(byKey.values)
+    }
+
+    private func rankingScore(for product: Product, query: String) -> Int {
+        let haystack = "\(product.brand) \(product.name)".lowercased()
+        let terms = query
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count >= 2 }
+        let matches = terms.reduce(into: 0) { total, term in
+            if haystack.contains(term) { total += 1 }
+        }
+        return (matches * 20) + (product.dataCompletenessScore * 8)
+    }
 }
 
 private struct OpenFoodFactsClient: Sendable {
@@ -63,7 +138,7 @@ private struct OpenFoodFactsClient: Sendable {
             URLQueryItem(name: "search_simple", value: "1"),
             URLQueryItem(name: "action", value: "process"),
             URLQueryItem(name: "json", value: "1"),
-            URLQueryItem(name: "page_size", value: "24"),
+            URLQueryItem(name: "page_size", value: "16"),
             URLQueryItem(name: "fields", value: fields)
         ]
         let request = request(for: components?.url)
@@ -71,7 +146,6 @@ private struct OpenFoodFactsClient: Sendable {
         let response = try JSONDecoder().decode(OpenFoodFactsSearchResponse.self, from: data)
         return response.products
             .compactMap { $0.asProduct() }
-            .filter { !$0.isLowConfidenceCatalogEntry || $0.hasIngredientDetails }
     }
 
     func product(forBarcode barcode: String) async throws -> Product? {

@@ -7,12 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0D659AFA7FF2CFA94E7A0BC3 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 126C72A49A8E6A3ED8D05468 /* README.md */; };
 		11578C2D81FC6ECC990F9E21 /* MealsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D31C97555E7FEA256B10086 /* MealsView.swift */; };
 		12B9BA9B110F85A1826F4F17 /* DiaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D869E5234B4DF4CD04D85215 /* DiaryView.swift */; };
 		160ACEE0AAB38895869568FF /* ThistleTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65A8744EEBED47326C4FF0C1 /* ThistleTheme.swift */; };
 		1B15392BA8A61437081324CF /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A7763A456EC44FA70066F77 /* RootTabView.swift */; };
 		33B926E56A34904D0DB23A6B /* ProductDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1B0326532AA2A269E54964B /* ProductDetailView.swift */; };
 		568BAB695AE0EA0E0E20AA0B /* SampleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 588DE83D1ABF96A3BC4E5D43 /* SampleData.swift */; };
+		57E3E2A443DA7DBBD3FFB34B /* BitcountInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 92427DC9A1251F31F8EF8790 /* BitcountInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf */; };
 		5FEC3D126601A4A062E200FA /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEA8C0660D468047F7C570BD /* AppStore.swift */; };
 		67FC26E5C97F6BE8B706E4A7 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66E084ED6470503586CEBA70 /* SearchView.swift */; };
 		69B2B1C14844A8A627B05CE6 /* AppPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01E0DA4A7BB4DDDA1D9A2E76 /* AppPersistence.swift */; };
@@ -22,9 +24,11 @@
 		A2D910C06474C6B283EB4AE7 /* ProductCatalogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7604E154EAE49BC475E72FF0 /* ProductCatalogService.swift */; };
 		A6F97033B700B2D0DD8C8CE4 /* GoalsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED20BDA66DA7EF678260FD2 /* GoalsView.swift */; };
 		A99FFD6565F9EBA07F8F9F32 /* DeepSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA6526FB9CE2F1EF6A3353FD /* DeepSearchService.swift */; };
+		AA2E3BC9AFDA15A4B6A988E1 /* Nabla-Regular-VariableFont_EDPT,EHLT.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 671253B5CBFCFBC45D64F75A /* Nabla-Regular-VariableFont_EDPT,EHLT.ttf */; };
 		C7F3E881A7B9DE38A33B21B4 /* BarcodeNormalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF7AE872E0A4224A5DB4BFF /* BarcodeNormalizer.swift */; };
 		CA12053F911504C27FCE6579 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 00DEA0FA2BC3DBDD903C07A5 /* Assets.xcassets */; };
 		D2A1080F4E1C83D0C24F56E8 /* NutritionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FF5B9402859F0DDC532FB62 /* NutritionModels.swift */; };
+		D4011F1C0D1B19B287E05B9A /* UnicaOne-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 56AC1651C0FC3D148FB88892 /* UnicaOne-Regular.ttf */; };
 		EF3A8F74820EACDAB57C9ABD /* ThistleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B66191DC097214D5BD3030CD /* ThistleApp.swift */; };
 /* End PBXBuildFile section */
 
@@ -33,15 +37,19 @@
 		01E0DA4A7BB4DDDA1D9A2E76 /* AppPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPersistence.swift; sourceTree = "<group>"; };
 		0A7763A456EC44FA70066F77 /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
 		0D31C97555E7FEA256B10086 /* MealsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealsView.swift; sourceTree = "<group>"; };
+		126C72A49A8E6A3ED8D05468 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		1FF5B9402859F0DDC532FB62 /* NutritionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NutritionModels.swift; sourceTree = "<group>"; };
 		38199B819F7E976E29D764A6 /* Thistle.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Thistle.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3ED20BDA66DA7EF678260FD2 /* GoalsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalsView.swift; sourceTree = "<group>"; };
+		56AC1651C0FC3D148FB88892 /* UnicaOne-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "UnicaOne-Regular.ttf"; sourceTree = "<group>"; };
 		588DE83D1ABF96A3BC4E5D43 /* SampleData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleData.swift; sourceTree = "<group>"; };
 		65A8744EEBED47326C4FF0C1 /* ThistleTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThistleTheme.swift; sourceTree = "<group>"; };
 		66E084ED6470503586CEBA70 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
+		671253B5CBFCFBC45D64F75A /* Nabla-Regular-VariableFont_EDPT,EHLT.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Nabla-Regular-VariableFont_EDPT,EHLT.ttf"; sourceTree = "<group>"; };
 		7604E154EAE49BC475E72FF0 /* ProductCatalogService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductCatalogService.swift; sourceTree = "<group>"; };
 		77AB5F1E109998E866B1A422 /* SharedViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedViews.swift; sourceTree = "<group>"; };
 		7B610C171A8F6027655E6E4A /* ScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanView.swift; sourceTree = "<group>"; };
+		92427DC9A1251F31F8EF8790 /* BitcountInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "BitcountInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf"; sourceTree = "<group>"; };
 		B66191DC097214D5BD3030CD /* ThistleApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThistleApp.swift; sourceTree = "<group>"; };
 		C1B0326532AA2A269E54964B /* ProductDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductDetailView.swift; sourceTree = "<group>"; };
 		D869E5234B4DF4CD04D85215 /* DiaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiaryView.swift; sourceTree = "<group>"; };
@@ -68,6 +76,17 @@
 			path = Models;
 			sourceTree = "<group>";
 		};
+		3F1CD693E75DF473C5D40D21 /* Fonts */ = {
+			isa = PBXGroup;
+			children = (
+				92427DC9A1251F31F8EF8790 /* BitcountInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf */,
+				671253B5CBFCFBC45D64F75A /* Nabla-Regular-VariableFont_EDPT,EHLT.ttf */,
+				126C72A49A8E6A3ED8D05468 /* README.md */,
+				56AC1651C0FC3D148FB88892 /* UnicaOne-Regular.ttf */,
+			);
+			path = Fonts;
+			sourceTree = "<group>";
+		};
 		5B95A498670BE8DC2C8965BA /* ViewModels */ = {
 			isa = PBXGroup;
 			children = (
@@ -82,6 +101,15 @@
 				38199B819F7E976E29D764A6 /* Thistle.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		63FCA750BB651DB52D19EEE5 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				3F1CD693E75DF473C5D40D21 /* Fonts */,
+			);
+			name = Resources;
+			path = ThistleApp/Resources;
 			sourceTree = "<group>";
 		};
 		6E4DEE9018A6E22001C3805F /* Sources */ = {
@@ -115,6 +143,7 @@
 		9440734941B40EE1AB38A465 = {
 			isa = PBXGroup;
 			children = (
+				63FCA750BB651DB52D19EEE5 /* Resources */,
 				6E4DEE9018A6E22001C3805F /* Sources */,
 				057AC9DE11044D6BF067DFA9 /* ThistleApp */,
 				62F96597826FE22352B4AEE4 /* Products */,
@@ -197,6 +226,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				CA12053F911504C27FCE6579 /* Assets.xcassets in Resources */,
+				57E3E2A443DA7DBBD3FFB34B /* BitcountInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf in Resources */,
+				AA2E3BC9AFDA15A4B6A988E1 /* Nabla-Regular-VariableFont_EDPT,EHLT.ttf in Resources */,
+				0D659AFA7FF2CFA94E7A0BC3 /* README.md in Resources */,
+				D4011F1C0D1B19B287E05B9A /* UnicaOne-Regular.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

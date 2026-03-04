@@ -161,7 +161,21 @@ struct Product: Identifiable, Hashable, Codable {
     }
 
     var hasIngredientDetails: Bool {
-        ingredients.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        ingredients.contains { ingredient in
+            let normalized = ingredient
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard !normalized.isEmpty else { return false }
+            let placeholders: Set<String> = [
+                "undefined",
+                "unknown",
+                "n/a",
+                "na",
+                "none",
+                "missing"
+            ]
+            return !placeholders.contains(normalized)
+        }
     }
 
     var hasMeaningfulNutrition: Bool {
