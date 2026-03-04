@@ -8,17 +8,11 @@ struct MealsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 HStack {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Meals")
-                            .font(.largeTitle.weight(.bold))
-                        Text("Build reusable meals and snacks from products, then log them in one tap.")
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
                     Button("New Meal") {
                         showingBuilder = true
                     }
                     .buttonStyle(.borderedProminent)
+                    Spacer()
                 }
 
                 ForEach(store.meals) { meal in
@@ -70,7 +64,7 @@ struct MealBuilderView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
-    @State private var servingsByProduct: [UUID: Double] = [:]
+    @State private var servingsByProduct: [String: Double] = [:]
 
     var body: some View {
         NavigationStack {
@@ -80,7 +74,7 @@ struct MealBuilderView: View {
                 }
 
                 Section("Products") {
-                    ForEach(store.products) { product in
+                    ForEach(store.mealBuilderProducts) { product in
                         HStack {
                             VStack(alignment: .leading) {
                                 Text(product.name)
@@ -117,7 +111,7 @@ struct MealBuilderView: View {
         }
     }
 
-    private func binding(for productID: UUID) -> Binding<Double> {
+    private func binding(for productID: String) -> Binding<Double> {
         Binding(
             get: { servingsByProduct[productID, default: 0] },
             set: { servingsByProduct[productID] = $0 }

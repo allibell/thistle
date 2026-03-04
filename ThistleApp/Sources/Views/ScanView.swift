@@ -8,11 +8,6 @@ struct ScanView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Barcode Scan")
-                    .font(.largeTitle.weight(.bold))
-                Text("Use the camera on a supported device, or type a barcode to simulate scan results while building the product catalog.")
-                    .foregroundStyle(.secondary)
-
                 if DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
                     BarcodeScannerView(scannedCode: $scannedCode)
                         .frame(height: 320)
@@ -23,13 +18,29 @@ struct ScanView: View {
 
                 manualLookup
 
-                if let resolvedCode = scannedCode ?? (!store.manualBarcode.isEmpty ? store.manualBarcode : nil) {
+                if store.isLookingUpBarcode {
+                    ProgressView("Looking up barcode...")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if let resolvedProduct = store.barcodeLookupResult {
+                    NavigationLink {
+                        ProductDetailView(product: resolvedProduct)
+                    } label: {
+                        ProductCard(product: resolvedProduct, analysis: store.analysis(for: resolvedProduct))
+                    }
+                    .buttonStyle(.plain)
+                } else if let resolvedCode = scannedCode ?? (!store.manualBarcode.isEmpty ? store.manualBarcode : nil) {
                     lookupResult(for: resolvedCode)
                 }
             }
             .padding()
         }
         .navigationTitle("Scan")
+        .onChange(of: scannedCode) { _, newValue in
+            guard let newValue else { return }
+            Task { await store.lookupBarcode(newValue) }
+        }
     }
 
     private var unsupportedView: some View {
@@ -55,6 +66,11 @@ struct ScanView: View {
             TextField("Enter UPC / EAN", text: $store.manualBarcode)
                 .textFieldStyle(.roundedBorder)
                 .keyboardType(.numberPad)
+            Button("Lookup Barcode") {
+                Task { await store.lookupBarcode(store.manualBarcode) }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(store.manualBarcode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isLookingUpBarcode)
         }
         .padding()
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
@@ -63,17 +79,12 @@ struct ScanView: View {
     @ViewBuilder
     private func lookupResult(for code: String) -> some View {
         if let product = store.productForBarcode(code) {
-            NavigationLink {
-                ProductDetailView(product: product)
-            } label: {
-                ProductCard(product: product, analysis: store.analysis(for: product))
-            }
-            .buttonStyle(.plain)
+            ProductCard(product: product, analysis: store.analysis(for: product))
         } else {
             VStack(alignment: .leading, spacing: 8) {
-                Text("No local match for \(code)")
+                Text(store.barcodeLookupError ?? "No cached match for \(code)")
                     .font(.headline)
-                Text("Next backend step: resolve the barcode through a UPC/product API, then cache the normalized product locally.")
+                Text("Try barcode lookup to search the online catalog and cache the normalized product locally.")
                     .foregroundStyle(.secondary)
             }
             .padding()

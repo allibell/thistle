@@ -2,6 +2,20 @@ import Foundation
 
 struct IngredientAnalyzer {
     func analyze(product: Product, for diet: DietProfile) -> ProductAnalysis {
+        if !product.hasIngredientDetails {
+            return ProductAnalysis(
+                rating: .yellow,
+                summary: "This entry is missing ingredients, so compatibility cannot be verified.",
+                flags: [
+                    IngredientFlag(
+                        ingredient: "Missing ingredients",
+                        severity: .caution,
+                        reason: "No ingredient list is available for this product."
+                    )
+                ]
+            )
+        }
+
         switch diet {
         case .whole30:
             return analyzeWhole30(product: product)

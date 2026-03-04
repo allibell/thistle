@@ -3,6 +3,7 @@ import Foundation
 enum SampleData {
     static let products: [Product] = [
         Product(
+            source: .seed,
             name: "Chicken Apple Sausage",
             brand: "Applegate",
             barcode: "025317005887",
@@ -12,6 +13,7 @@ enum SampleData {
             nutrition: NutritionFacts(calories: 140, protein: 11, carbs: 4, fat: 9)
         ),
         Product(
+            source: .seed,
             name: "Cauliflower Gnocchi",
             brand: "Trader Joe's",
             barcode: "00912731",
@@ -21,6 +23,7 @@ enum SampleData {
             nutrition: NutritionFacts(calories: 140, protein: 3, carbs: 22, fat: 3)
         ),
         Product(
+            source: .seed,
             name: "Protein Bar Chocolate Peanut Butter",
             brand: "FitFuel",
             barcode: "850123456789",
@@ -30,6 +33,7 @@ enum SampleData {
             nutrition: NutritionFacts(calories: 220, protein: 20, carbs: 23, fat: 8)
         ),
         Product(
+            source: .seed,
             name: "Coconut Yogurt Vanilla",
             brand: "Cultured Co.",
             barcode: "860000112233",
@@ -39,6 +43,7 @@ enum SampleData {
             nutrition: NutritionFacts(calories: 180, protein: 2, carbs: 17, fat: 12)
         ),
         Product(
+            source: .seed,
             name: "Wild Salmon Burger",
             brand: "North Shore",
             barcode: "761234567890",
@@ -48,6 +53,7 @@ enum SampleData {
             nutrition: NutritionFacts(calories: 170, protein: 20, carbs: 1, fat: 9)
         ),
         Product(
+            source: .seed,
             name: "Almond Flour Crackers",
             brand: "Simple Mills",
             barcode: "856069005162",

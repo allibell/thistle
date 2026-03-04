@@ -14,15 +14,20 @@
 		568BAB695AE0EA0E0E20AA0B /* SampleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 588DE83D1ABF96A3BC4E5D43 /* SampleData.swift */; };
 		5FEC3D126601A4A062E200FA /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEA8C0660D468047F7C570BD /* AppStore.swift */; };
 		67FC26E5C97F6BE8B706E4A7 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66E084ED6470503586CEBA70 /* SearchView.swift */; };
+		69B2B1C14844A8A627B05CE6 /* AppPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01E0DA4A7BB4DDDA1D9A2E76 /* AppPersistence.swift */; };
 		706970B38D5DC812705FD29E /* SharedViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77AB5F1E109998E866B1A422 /* SharedViews.swift */; };
 		85E64854F1801102A9875EAC /* ScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B610C171A8F6027655E6E4A /* ScanView.swift */; };
 		8D7E0E3AFE1646EA367266A4 /* IngredientAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBF83D08D07E521287F90A8E /* IngredientAnalyzer.swift */; };
+		A2D910C06474C6B283EB4AE7 /* ProductCatalogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7604E154EAE49BC475E72FF0 /* ProductCatalogService.swift */; };
 		A6F97033B700B2D0DD8C8CE4 /* GoalsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED20BDA66DA7EF678260FD2 /* GoalsView.swift */; };
+		A99FFD6565F9EBA07F8F9F32 /* DeepSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA6526FB9CE2F1EF6A3353FD /* DeepSearchService.swift */; };
+		C7F3E881A7B9DE38A33B21B4 /* BarcodeNormalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF7AE872E0A4224A5DB4BFF /* BarcodeNormalizer.swift */; };
 		D2A1080F4E1C83D0C24F56E8 /* NutritionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FF5B9402859F0DDC532FB62 /* NutritionModels.swift */; };
 		EF3A8F74820EACDAB57C9ABD /* ThistleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B66191DC097214D5BD3030CD /* ThistleApp.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		01E0DA4A7BB4DDDA1D9A2E76 /* AppPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPersistence.swift; sourceTree = "<group>"; };
 		0A7763A456EC44FA70066F77 /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
 		0D31C97555E7FEA256B10086 /* MealsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealsView.swift; sourceTree = "<group>"; };
 		1FF5B9402859F0DDC532FB62 /* NutritionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NutritionModels.swift; sourceTree = "<group>"; };
@@ -30,6 +35,7 @@
 		3ED20BDA66DA7EF678260FD2 /* GoalsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalsView.swift; sourceTree = "<group>"; };
 		588DE83D1ABF96A3BC4E5D43 /* SampleData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleData.swift; sourceTree = "<group>"; };
 		66E084ED6470503586CEBA70 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
+		7604E154EAE49BC475E72FF0 /* ProductCatalogService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductCatalogService.swift; sourceTree = "<group>"; };
 		77AB5F1E109998E866B1A422 /* SharedViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedViews.swift; sourceTree = "<group>"; };
 		7B610C171A8F6027655E6E4A /* ScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanView.swift; sourceTree = "<group>"; };
 		B66191DC097214D5BD3030CD /* ThistleApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThistleApp.swift; sourceTree = "<group>"; };
@@ -37,6 +43,8 @@
 		D869E5234B4DF4CD04D85215 /* DiaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiaryView.swift; sourceTree = "<group>"; };
 		DEA8C0660D468047F7C570BD /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
 		EBF83D08D07E521287F90A8E /* IngredientAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IngredientAnalyzer.swift; sourceTree = "<group>"; };
+		FA6526FB9CE2F1EF6A3353FD /* DeepSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSearchService.swift; sourceTree = "<group>"; };
+		FBF7AE872E0A4224A5DB4BFF /* BarcodeNormalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BarcodeNormalizer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -103,7 +111,11 @@
 		AB3DCEF35AE2D3E64816F4C8 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				01E0DA4A7BB4DDDA1D9A2E76 /* AppPersistence.swift */,
+				FBF7AE872E0A4224A5DB4BFF /* BarcodeNormalizer.swift */,
+				FA6526FB9CE2F1EF6A3353FD /* DeepSearchService.swift */,
 				EBF83D08D07E521287F90A8E /* IngredientAnalyzer.swift */,
+				7604E154EAE49BC475E72FF0 /* ProductCatalogService.swift */,
 				588DE83D1ABF96A3BC4E5D43 /* SampleData.swift */,
 			);
 			path = Services;
@@ -170,12 +182,16 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				69B2B1C14844A8A627B05CE6 /* AppPersistence.swift in Sources */,
 				5FEC3D126601A4A062E200FA /* AppStore.swift in Sources */,
+				C7F3E881A7B9DE38A33B21B4 /* BarcodeNormalizer.swift in Sources */,
+				A99FFD6565F9EBA07F8F9F32 /* DeepSearchService.swift in Sources */,
 				12B9BA9B110F85A1826F4F17 /* DiaryView.swift in Sources */,
 				A6F97033B700B2D0DD8C8CE4 /* GoalsView.swift in Sources */,
 				8D7E0E3AFE1646EA367266A4 /* IngredientAnalyzer.swift in Sources */,
 				11578C2D81FC6ECC990F9E21 /* MealsView.swift in Sources */,
 				D2A1080F4E1C83D0C24F56E8 /* NutritionModels.swift in Sources */,
+				A2D910C06474C6B283EB4AE7 /* ProductCatalogService.swift in Sources */,
 				33B926E56A34904D0DB23A6B /* ProductDetailView.swift in Sources */,
 				1B15392BA8A61437081324CF /* RootTabView.swift in Sources */,
 				568BAB695AE0EA0E0E20AA0B /* SampleData.swift in Sources */,
