@@ -28,6 +28,10 @@ final class AppStore: ObservableObject {
     @Published var searchError: String?
     @Published var isSearching = false
     @Published var isDeepSearching = false
+    @Published var deepSearchDebugLog: [String] = []
+    @Published var activeDeepSearchProductID: String?
+    @Published var activeDeepSearchScope: DeepSearchScope?
+    @Published var pendingDeepSearchProposal: DeepSearchProposal?
     @Published var hasSubmittedSearch = false
     @Published var barcodeLookupResult: Product?
     @Published var barcodeLookupError: String?
@@ -127,16 +131,19 @@ final class AppStore: ObservableObject {
             }
             remoteSearchResults = products
             mergeIntoCache(products)
-            if shouldDeepSearch(after: products) {
-                await runDeepSearch(for: trimmed)
-            } else if products.isEmpty, localProductResults.isEmpty, matchingMeals.isEmpty {
+            if products.isEmpty, localProductResults.isEmpty, matchingMeals.isEmpty {
                 searchError = "No matching foods found in your local library or the online catalog."
             }
         } catch {
             remoteSearchResults = []
             searchError = error.localizedDescription
-            await runDeepSearch(for: trimmed)
         }
+    }
+
+    func runManualDeepSearchForCurrentQuery() async {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        await runDeepSearch(for: trimmed)
     }
 
     func lookupBarcode(_ barcode: String) async {
@@ -210,6 +217,74 @@ final class AppStore: ObservableObject {
     func productForBarcode(_ barcode: String) -> Product? {
         let variants = Set(BarcodeNormalizer.variants(for: barcode))
         return localCatalog.first(where: { variants.contains(BarcodeNormalizer.digitsOnly(from: $0.barcode)) })
+    }
+
+    func product(withID id: String) -> Product? {
+        localCatalog.first(where: { $0.id == id })
+    }
+
+    func enrich(product: Product, scope: DeepSearchScope) async {
+        resetDeepSearchDebugLog()
+        pendingDeepSearchProposal = nil
+        isDeepSearching = true
+        activeDeepSearchProductID = product.id
+        activeDeepSearchScope = scope
+        appendDeepSearchLog("Starting deep search update for \(product.name) [scope: \(scope.rawValue)].")
+        defer { isDeepSearching = false }
+        defer {
+            activeDeepSearchProductID = nil
+            activeDeepSearchScope = nil
+        }
+
+        do {
+            appendDeepSearchLog("Querying fallback sources.")
+            guard let enriched = try await deepSearchService.deepSearchProduct(for: product, scope: scope) else {
+                appendDeepSearchLog("Deep search found no candidate.")
+                return
+            }
+            appendDeepSearchLog("Deep search found a candidate: \(enriched.name).")
+            guard let proposal = buildDeepSearchProposal(for: product, candidate: enriched, scope: scope) else {
+                appendDeepSearchLog("Rejected candidate because it did not look like a confident match or did not add useful missing data.")
+                return
+            }
+
+            pendingDeepSearchProposal = proposal
+            appendDeepSearchLog("Prepared a pending update with \(proposal.changedFields.count) field change(s).")
+            appendDeepSearchLog("Waiting for manual approval before applying.")
+        } catch {
+            searchError = "Deep search update failed."
+            appendDeepSearchLog("Deep search failed: \(error.localizedDescription)")
+        }
+    }
+
+    func approvePendingDeepSearchProposal() {
+        guard let proposal = pendingDeepSearchProposal else { return }
+
+        mergeIntoCache([proposal.mergedProduct])
+        if deepSearchResult?.id == proposal.productID {
+            deepSearchResult = proposal.mergedProduct
+        }
+        if barcodeLookupResult?.id == proposal.productID {
+            barcodeLookupResult = proposal.mergedProduct
+        }
+        appendDeepSearchLog("Applied approved update to the local cache.")
+        pendingDeepSearchProposal = nil
+    }
+
+    func rejectPendingDeepSearchProposal() {
+        guard pendingDeepSearchProposal != nil else { return }
+        appendDeepSearchLog("Rejected pending update.")
+        pendingDeepSearchProposal = nil
+    }
+
+    func isDeepSearchActive(productID: String, scope: DeepSearchScope? = nil) -> Bool {
+        guard isDeepSearching, activeDeepSearchProductID == productID else { return false }
+        guard let scope else { return true }
+        return activeDeepSearchScope == scope
+    }
+
+    func setMacroPercents(protein: Int, carbs: Int, fat: Int) {
+        goals.setMacroPercents(protein: protein, carbs: carbs, fat: fat)
     }
 
     func saveMeal(name: String, selections: [String: Double]) {
@@ -370,33 +445,311 @@ final class AppStore: ObservableObject {
         product.dataCompletenessScore * 6
     }
 
-    private func shouldDeepSearch(after products: [Product]) -> Bool {
-        if products.isEmpty, localProductResults.isEmpty, matchingMeals.isEmpty {
-            return true
+    private func runDeepSearch(for query: String) async {
+        resetDeepSearchDebugLog()
+        pendingDeepSearchProposal = nil
+        isDeepSearching = true
+        activeDeepSearchProductID = nil
+        activeDeepSearchScope = .all
+        appendDeepSearchLog("Starting manual deep search for query: \(query)")
+        defer { isDeepSearching = false }
+        defer {
+            activeDeepSearchProductID = nil
+            activeDeepSearchScope = nil
         }
 
-        let bestScore = products.map(\.dataCompletenessScore).max() ?? 0
-        let hasCompleteRemoteResult = products.contains { $0.hasIngredientDetails && $0.hasMeaningfulNutrition }
-        return !hasCompleteRemoteResult && bestScore < 7
-    }
-
-    private func runDeepSearch(for query: String) async {
-        isDeepSearching = true
-        defer { isDeepSearching = false }
-
         do {
+            appendDeepSearchLog("Querying fallback sources.")
             if let enriched = try await deepSearchService.deepSearchProduct(matching: query) {
                 deepSearchResult = enriched
                 mergeIntoCache([enriched])
                 searchError = nil
+                appendDeepSearchLog("Deep search found and cached: \(enriched.name)")
             } else if remoteSearchResults.isEmpty, localProductResults.isEmpty, matchingMeals.isEmpty {
                 searchError = "No matching foods found, including deep search."
+                appendDeepSearchLog("Deep search completed with no match.")
+            } else {
+                appendDeepSearchLog("Deep search completed but did not improve current results.")
             }
         } catch {
             if remoteSearchResults.isEmpty, localProductResults.isEmpty, matchingMeals.isEmpty {
                 searchError = "No matching foods found, and deep search failed."
             }
+            appendDeepSearchLog("Deep search failed: \(error.localizedDescription)")
         }
+    }
+
+    private func merge(product: Product, with enriched: Product, scope: DeepSearchScope) -> Product {
+        var merged = product
+
+        switch scope {
+        case .all:
+            if !enriched.name.isEmpty { merged.name = enriched.name }
+            if enriched.brand != "Unknown Brand" { merged.brand = enriched.brand }
+            if !enriched.barcode.isEmpty { merged.barcode = enriched.barcode }
+            if !enriched.stores.isEmpty { merged.stores = enriched.stores }
+            if enriched.servingDescription != "1 serving" { merged.servingDescription = enriched.servingDescription }
+            if !enriched.ingredients.isEmpty { merged.ingredients = enriched.ingredients }
+            if enriched.hasMeaningfulNutrition { merged.nutrition = enriched.nutrition }
+            if enriched.imageURL != nil { merged.imageURL = enriched.imageURL }
+        case .macros:
+            if enriched.hasMeaningfulNutrition {
+                merged.nutrition = enriched.nutrition
+            }
+            if enriched.servingDescription != "1 serving" {
+                merged.servingDescription = enriched.servingDescription
+            }
+        case .ingredients:
+            if !enriched.ingredients.isEmpty {
+                merged.ingredients = enriched.ingredients
+            }
+        case .stores:
+            if !enriched.stores.isEmpty {
+                merged.stores = enriched.stores
+            }
+        }
+
+        merged.lastUpdatedAt = .now
+        return merged
+    }
+
+    private func buildDeepSearchProposal(for product: Product, candidate: Product, scope: DeepSearchScope) -> DeepSearchProposal? {
+        let merged = merge(product: product, with: candidate, scope: scope)
+        let changedFields = diffFields(from: product, to: merged)
+
+        guard !changedFields.isEmpty else {
+            appendDeepSearchLog("Rejected candidate because it would not change any fields.")
+            return nil
+        }
+
+        let infoGain = changedFields.filter(\.addsMissingData)
+        guard !infoGain.isEmpty else {
+            appendDeepSearchLog("Rejected candidate because it did not fill any missing sections.")
+            return nil
+        }
+
+        let match = evaluateDeepSearchMatch(existing: product, candidate: candidate)
+        for reason in match.reasons {
+            appendDeepSearchLog(reason)
+        }
+
+        if !match.accepted {
+            appendDeepSearchLog("Rejected candidate with confidence score \(match.score).")
+            return nil
+        }
+
+        appendDeepSearchLog("Accepted candidate for review with confidence score \(match.score).")
+        return DeepSearchProposal(
+            productID: product.id,
+            candidateProduct: candidate,
+            mergedProduct: merged,
+            scope: scope.rawValue,
+            confidenceScore: match.score,
+            confidenceReasons: match.reasons,
+            changedFields: changedFields
+        )
+    }
+
+    private func diffFields(from original: Product, to updated: Product) -> [DeepSearchFieldDiff] {
+        var diffs: [DeepSearchFieldDiff] = []
+
+        if normalizedComparableText(original.name) != normalizedComparableText(updated.name) {
+            diffs.append(
+                DeepSearchFieldDiff(
+                    kind: .name,
+                    label: "Name",
+                    oldValue: original.name,
+                    newValue: updated.name,
+                    addsMissingData: false
+                )
+            )
+        }
+
+        if normalizedComparableText(original.brand) != normalizedComparableText(updated.brand) {
+            diffs.append(
+                DeepSearchFieldDiff(
+                    kind: .brand,
+                    label: "Brand",
+                    oldValue: original.brand,
+                    newValue: updated.brand,
+                    addsMissingData: normalizedComparableText(original.brand).isEmpty || original.brand == "Unknown Brand"
+                )
+            )
+        }
+
+        if BarcodeNormalizer.digitsOnly(from: original.barcode) != BarcodeNormalizer.digitsOnly(from: updated.barcode) {
+            diffs.append(
+                DeepSearchFieldDiff(
+                    kind: .barcode,
+                    label: "Barcode",
+                    oldValue: valueOrPlaceholder(original.barcode),
+                    newValue: valueOrPlaceholder(updated.barcode),
+                    addsMissingData: BarcodeNormalizer.digitsOnly(from: original.barcode).isEmpty && !BarcodeNormalizer.digitsOnly(from: updated.barcode).isEmpty
+                )
+            )
+        }
+
+        if normalizedComparableText(original.servingDescription) != normalizedComparableText(updated.servingDescription) {
+            diffs.append(
+                DeepSearchFieldDiff(
+                    kind: .serving,
+                    label: "Serving",
+                    oldValue: original.servingDescription,
+                    newValue: updated.servingDescription,
+                    addsMissingData: original.servingDescription == "1 serving" && updated.servingDescription != "1 serving"
+                )
+            )
+        }
+
+        if Set(original.stores) != Set(updated.stores) {
+            diffs.append(
+                DeepSearchFieldDiff(
+                    kind: .stores,
+                    label: "Stores",
+                    oldValue: original.stores.isEmpty ? "Missing" : original.stores.joined(separator: ", "),
+                    newValue: updated.stores.isEmpty ? "Missing" : updated.stores.joined(separator: ", "),
+                    addsMissingData: original.stores.isEmpty && !updated.stores.isEmpty
+                )
+            )
+        }
+
+        if original.ingredients != updated.ingredients {
+            diffs.append(
+                DeepSearchFieldDiff(
+                    kind: .ingredients,
+                    label: "Ingredients",
+                    oldValue: summarizeIngredients(original.ingredients),
+                    newValue: summarizeIngredients(updated.ingredients),
+                    addsMissingData: !original.hasIngredientDetails && updated.hasIngredientDetails
+                )
+            )
+        }
+
+        if original.nutrition != updated.nutrition {
+            diffs.append(
+                DeepSearchFieldDiff(
+                    kind: .macros,
+                    label: "Macros",
+                    oldValue: summarizeNutrition(original.nutrition),
+                    newValue: summarizeNutrition(updated.nutrition),
+                    addsMissingData: !original.hasMeaningfulNutrition && updated.hasMeaningfulNutrition
+                )
+            )
+        }
+
+        if original.imageURL != updated.imageURL {
+            diffs.append(
+                DeepSearchFieldDiff(
+                    kind: .image,
+                    label: "Image",
+                    oldValue: original.imageURL == nil ? "Missing" : "Present",
+                    newValue: updated.imageURL == nil ? "Missing" : "Present",
+                    addsMissingData: original.imageURL == nil && updated.imageURL != nil
+                )
+            )
+        }
+
+        return diffs
+    }
+
+    private func evaluateDeepSearchMatch(existing: Product, candidate: Product) -> (accepted: Bool, score: Int, reasons: [String]) {
+        var score = 0
+        var reasons: [String] = []
+
+        let existingBarcode = BarcodeNormalizer.digitsOnly(from: existing.barcode)
+        let candidateBarcode = BarcodeNormalizer.digitsOnly(from: candidate.barcode)
+        let barcodeVariants = Set(BarcodeNormalizer.variants(for: existingBarcode))
+
+        if !existingBarcode.isEmpty, !candidateBarcode.isEmpty {
+            if barcodeVariants.contains(candidateBarcode) {
+                score += 100
+                reasons.append("Barcode matched exactly or via normalized variant.")
+            } else {
+                score -= 120
+                reasons.append("Barcode mismatch: existing \(existingBarcode), candidate \(candidateBarcode).")
+            }
+        } else {
+            reasons.append("No barcode match available, falling back to name/brand/macros.")
+        }
+
+        let nameOverlap = overlapScore(lhs: existing.name, rhs: candidate.name)
+        score += Int((nameOverlap - 0.5) * 80)
+        reasons.append("Name overlap score: \(Int((nameOverlap * 100).rounded()))%.")
+
+        let existingBrand = normalizedComparableText(existing.brand)
+        let candidateBrand = normalizedComparableText(candidate.brand)
+        if !existingBrand.isEmpty, existing.brand != "Unknown Brand", !candidateBrand.isEmpty, candidate.brand != "Unknown Brand" {
+            let brandOverlap = overlapScore(lhs: existing.brand, rhs: candidate.brand)
+            score += Int((brandOverlap - 0.5) * 40)
+            reasons.append("Brand overlap score: \(Int((brandOverlap * 100).rounded()))%.")
+        }
+
+        if existing.hasMeaningfulNutrition, candidate.hasMeaningfulNutrition {
+            let macroDrift = macroDifferenceScore(lhs: existing.nutrition, rhs: candidate.nutrition)
+            score += macroDrift.scoreAdjustment
+            reasons.append(macroDrift.reason)
+        } else {
+            reasons.append("Macro comparison skipped because one side lacks nutrition.")
+        }
+
+        let hasStrongIdentityMatch = (!existingBarcode.isEmpty && barcodeVariants.contains(candidateBarcode)) || nameOverlap >= 0.75
+        let accepted = hasStrongIdentityMatch && score >= 20
+        return (accepted, score, reasons)
+    }
+
+    private func overlapScore(lhs: String, rhs: String) -> Double {
+        let lhsTerms = Set(normalizedTerms(for: lhs))
+        let rhsTerms = Set(normalizedTerms(for: rhs))
+        guard !lhsTerms.isEmpty, !rhsTerms.isEmpty else { return 0 }
+        let intersection = lhsTerms.intersection(rhsTerms).count
+        let union = lhsTerms.union(rhsTerms).count
+        guard union > 0 else { return 0 }
+        return Double(intersection) / Double(union)
+    }
+
+    private func macroDifferenceScore(lhs: NutritionFacts, rhs: NutritionFacts) -> (scoreAdjustment: Int, reason: String) {
+        func close(_ a: Double, _ b: Double, tolerance: Double) -> Bool {
+            abs(a - b) <= tolerance
+        }
+
+        let caloriesClose = abs(lhs.calories - rhs.calories) <= 20
+        let proteinClose = close(lhs.protein, rhs.protein, tolerance: 3)
+        let carbsClose = close(lhs.carbs, rhs.carbs, tolerance: 3)
+        let fatClose = close(lhs.fat, rhs.fat, tolerance: 3)
+        let exactishMatches = [caloriesClose, proteinClose, carbsClose, fatClose].filter { $0 }.count
+
+        if exactishMatches >= 3 {
+            return (20, "Macros are close to the existing entry.")
+        }
+
+        if exactishMatches == 2 {
+            return (5, "Macros are partially aligned with the existing entry.")
+        }
+
+        return (-35, "Macros drift too far from the existing entry.")
+    }
+
+    private func normalizedComparableText(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func valueOrPlaceholder(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Missing" : trimmed
+    }
+
+    private func summarizeIngredients(_ ingredients: [String]) -> String {
+        guard !ingredients.isEmpty else { return "Missing" }
+        let preview = ingredients.prefix(3).joined(separator: ", ")
+        if ingredients.count > 3 {
+            return "\(preview) +\(ingredients.count - 3) more"
+        }
+        return preview
+    }
+
+    private func summarizeNutrition(_ nutrition: NutritionFacts) -> String {
+        guard nutrition != .zero else { return "Missing" }
+        return "\(nutrition.calories) cal, \(Int(nutrition.protein.rounded()))g P, \(Int(nutrition.carbs.rounded()))g C, \(Int(nutrition.fat.rounded()))g F"
     }
 
     private func setupPersistence() {
@@ -431,5 +784,14 @@ final class AppStore: ObservableObject {
                 usageCounts: usageCounts
             )
         )
+    }
+
+    private func resetDeepSearchDebugLog() {
+        deepSearchDebugLog = []
+    }
+
+    private func appendDeepSearchLog(_ message: String) {
+        let timestamp = Date.now.formatted(date: .omitted, time: .standard)
+        deepSearchDebugLog.append("[\(timestamp)] \(message)")
     }
 }

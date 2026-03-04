@@ -1,7 +1,15 @@
 import Foundation
 
+enum DeepSearchScope: String, CaseIterable, Sendable {
+    case all
+    case macros
+    case ingredients
+    case stores
+}
+
 protocol DeepSearchServing: Sendable {
     func deepSearchProduct(matching query: String) async throws -> Product?
+    func deepSearchProduct(for product: Product, scope: DeepSearchScope) async throws -> Product?
 }
 
 struct DeepSearchService: DeepSearchServing, Sendable {
@@ -38,6 +46,11 @@ struct DeepSearchService: DeepSearchServing, Sendable {
         return nutritionSeed
     }
 
+    func deepSearchProduct(for product: Product, scope: DeepSearchScope) async throws -> Product? {
+        let query = searchQuery(for: product, scope: scope)
+        return try await deepSearchProduct(matching: query)
+    }
+
     private func bestTitle(primary: String, fallback: String, query: String) -> String {
         if !primary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return primary }
         if !fallback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return fallback }
@@ -47,6 +60,23 @@ struct DeepSearchService: DeepSearchServing, Sendable {
     private func preferredServing(primary: String, fallback: String) -> String {
         if primary != "1 serving" { return primary }
         return fallback
+    }
+
+    private func searchQuery(for product: Product, scope: DeepSearchScope) -> String {
+        let base = [product.brand, product.name]
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0 != "Unknown Brand" }
+            .joined(separator: " ")
+
+        switch scope {
+        case .all:
+            return base
+        case .macros:
+            return "\(base) nutrition facts"
+        case .ingredients:
+            return "\(base) ingredients"
+        case .stores:
+            return "\(base) stores"
+        }
     }
 }
 
@@ -135,12 +165,16 @@ private struct WebFallbackClient: Sendable {
 
     func searchProduct(matching query: String) async throws -> Product? {
         let urls = try await searchResultURLs(for: "\"\(query)\" ingredients nutrition")
+        var bestMatch: (product: Product, score: Int)?
         for url in urls.prefix(4) {
             if let product = try await scrapeProduct(from: url, query: query) {
-                return product
+                let score = score(product: product, for: query)
+                if bestMatch == nil || score > bestMatch?.score ?? .min {
+                    bestMatch = (product, score)
+                }
             }
         }
-        return nil
+        return bestMatch?.product
     }
 
     private func searchResultURLs(for query: String) async throws -> [URL] {
@@ -150,10 +184,7 @@ private struct WebFallbackClient: Sendable {
         let html = String(decoding: data, as: UTF8.self)
 
         let matches = html.matches(for: #"result__a" href="([^"]+)""#)
-        return matches.compactMap { match in
-            let cleaned = match.replacingOccurrences(of: "&amp;", with: "&")
-            return URL(string: cleaned)
-        }
+        return matches.compactMap(normalizeSearchResultURL)
     }
 
     private func scrapeProduct(from url: URL, query: String) async throws -> Product? {
@@ -218,6 +249,42 @@ private struct WebFallbackClient: Sendable {
         let titleTerms = title.split(separator: " ").map(String.init)
         let brandTerms = titleTerms.prefix { !queryTerms.contains($0.lowercased()) }
         return brandTerms.joined(separator: " ").nilIfEmpty ?? "Unknown Brand"
+    }
+
+    private func score(product: Product, for query: String) -> Int {
+        let queryTerms = Set(normalizedQueryTerms(from: query))
+        let titleTerms = Set(normalizedQueryTerms(from: product.name))
+        let overlap = queryTerms.intersection(titleTerms).count
+        return (overlap * 20) + (product.dataCompletenessScore * 10)
+    }
+
+    private func normalizedQueryTerms(from string: String) -> [String] {
+        let ignoredTerms: Set<String> = ["ingredients", "nutrition", "facts", "stores"]
+        return string
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count >= 3 && !ignoredTerms.contains($0) }
+    }
+
+    private func normalizeSearchResultURL(_ raw: String) -> URL? {
+        let cleaned = raw.replacingOccurrences(of: "&amp;", with: "&")
+
+        if cleaned.hasPrefix("//") {
+            return normalizeSearchResultURL("https:" + cleaned)
+        }
+
+        guard let url = URL(string: cleaned) else { return nil }
+
+        if url.host?.contains("duckduckgo.com") == true,
+           url.path == "/l/",
+           let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let target = components.queryItems?.first(where: { $0.name == "uddg" })?.value,
+           let decodedTarget = target.removingPercentEncoding,
+           let targetURL = URL(string: decodedTarget) {
+            return targetURL
+        }
+
+        return url
     }
 }
 

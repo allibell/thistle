@@ -205,6 +205,93 @@ struct MacroGoals: Codable, Hashable {
     var fat: Double
 
     static let `default` = MacroGoals(calories: 1800, protein: 120, carbs: 140, fat: 70)
+
+    var proteinCalories: Double { protein * 4 }
+    var carbCalories: Double { carbs * 4 }
+    var fatCalories: Double { fat * 9 }
+
+    var proteinPercent: Int {
+        percentage(forCalories: proteinCalories)
+    }
+
+    var carbPercent: Int {
+        percentage(forCalories: carbCalories)
+    }
+
+    var fatPercent: Int {
+        percentage(forCalories: fatCalories)
+    }
+
+    mutating func setMacroPercents(protein proteinPercent: Int, carbs carbPercent: Int, fat fatPercent: Int) {
+        let safeProtein = max(0, proteinPercent)
+        let safeCarbs = max(0, carbPercent)
+        let safeFat = max(0, fatPercent)
+
+        protein = grams(forPercent: safeProtein, caloriesPerGram: 4)
+        carbs = grams(forPercent: safeCarbs, caloriesPerGram: 4)
+        fat = grams(forPercent: safeFat, caloriesPerGram: 9)
+    }
+
+    private func percentage(forCalories macroCalories: Double) -> Int {
+        guard calories > 0 else { return 0 }
+        return Int(((macroCalories / Double(calories)) * 100).rounded())
+    }
+
+    private func grams(forPercent percent: Int, caloriesPerGram: Double) -> Double {
+        let allocatedCalories = (Double(calories) * Double(percent)) / 100
+        return allocatedCalories / caloriesPerGram
+    }
+}
+
+struct DeepSearchFieldDiff: Identifiable, Hashable, Codable {
+    enum Kind: String, Codable, Hashable {
+        case name
+        case brand
+        case barcode
+        case serving
+        case stores
+        case ingredients
+        case macros
+        case image
+    }
+
+    var id: String { kind.rawValue }
+    var kind: Kind
+    var label: String
+    var oldValue: String
+    var newValue: String
+    var addsMissingData: Bool
+}
+
+struct DeepSearchProposal: Identifiable, Hashable, Codable {
+    var id: String
+    var productID: String
+    var candidateProduct: Product
+    var mergedProduct: Product
+    var scope: String
+    var confidenceScore: Int
+    var confidenceReasons: [String]
+    var changedFields: [DeepSearchFieldDiff]
+
+    init(
+        id: String = UUID().uuidString,
+        productID: String,
+        candidateProduct: Product,
+        mergedProduct: Product,
+        scope: String,
+        confidenceScore: Int,
+        confidenceReasons: [String],
+        changedFields: [DeepSearchFieldDiff]
+    ) {
+        self.id = id
+        self.productID = productID
+        self.candidateProduct = candidateProduct
+        self.mergedProduct = mergedProduct
+        self.scope = scope
+        self.confidenceScore = confidenceScore
+        self.confidenceReasons = confidenceReasons
+        self.changedFields = changedFields
+    }
 }
 
 struct LoggedFood: Identifiable, Hashable, Codable {

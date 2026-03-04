@@ -29,6 +29,14 @@ struct SearchView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                if store.hasSubmittedSearch && store.searchResults.isEmpty && !store.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    deepSearchButton
+                }
+
+                if store.isDeepSearching && !store.deepSearchDebugLog.isEmpty {
+                    debugSection
+                }
+
                 ForEach(store.searchResults) { product in
                     NavigationLink {
                         ProductDetailView(product: product)
@@ -70,21 +78,11 @@ struct SearchView: View {
                 .pickerStyle(.menu)
 
                 Spacer()
-
-                Toggle("Hide Red", isOn: $store.onlyShowCompatible)
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                Text("Hide Red")
-                    .font(.subheadline)
             }
 
-            HStack {
-                Toggle("Hide Caution", isOn: $store.hideCautionOrIncomplete)
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                Text("Hide Caution")
-                    .font(.subheadline)
-                Spacer()
+            VStack(alignment: .leading, spacing: 8) {
+                filterToggle(title: "Hide Red", isOn: $store.onlyShowCompatible)
+                filterToggle(title: "Hide Caution", isOn: $store.hideCautionOrIncomplete)
             }
         }
         .padding()
@@ -114,6 +112,38 @@ struct SearchView: View {
 
             Spacer()
         }
+    }
+
+    private func filterToggle(title: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 10) {
+            Toggle(title, isOn: isOn)
+                .toggleStyle(.switch)
+                .labelsHidden()
+            Text(title)
+                .font(.subheadline)
+        }
+    }
+
+    private var deepSearchButton: some View {
+        Button("BETA: Find With Deep Search") {
+            Task { await store.runManualDeepSearchForCurrentQuery() }
+        }
+        .buttonStyle(.bordered)
+        .disabled(store.query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || store.isDeepSearching)
+    }
+
+    private var debugSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Deep Search Debug")
+                .font(.headline)
+            ForEach(Array(store.deepSearchDebugLog.enumerated()), id: \.offset) { _, entry in
+                Text(entry)
+                    .font(.caption.monospaced())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding()
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
     }
 
     private var mealsSection: some View {
