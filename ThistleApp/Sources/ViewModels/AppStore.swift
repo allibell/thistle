@@ -1,11 +1,21 @@
 import Combine
 import Foundation
 
+enum AppTab: Hashable {
+    case search
+    case scan
+    case diary
+    case meals
+    case goals
+}
+
 @MainActor
 final class AppStore: ObservableObject {
+    @Published var selectedTab: AppTab = .search
     @Published var selectedDiet: DietProfile = .whole30
     @Published var goals: MacroGoals = .default
     @Published var cachedProducts: [Product] = []
+    @Published var favoriteProductKeys: Set<String> = []
     @Published var meals: [SavedMeal] = [
         SavedMeal(
             name: "Post-Workout Plate",
@@ -61,6 +71,7 @@ final class AppStore: ObservableObject {
             selectedDiet = state.selectedDiet
             goals = state.goals
             cachedProducts = state.cachedProducts
+            favoriteProductKeys = Set(state.favoriteProductKeys)
             meals = state.meals
             loggedFoods = state.loggedFoods
             usageCounts = state.usageCounts
@@ -81,8 +92,17 @@ final class AppStore: ObservableObject {
         localCatalog.sorted { combinedRankingScore(for: $0) > combinedRankingScore(for: $1) }
     }
 
+    var favoriteProducts: [Product] {
+        localCatalog
+            .filter(isFavorite)
+            .sorted { combinedRankingScore(for: $0) > combinedRankingScore(for: $1) }
+    }
+
     var availableStores: [String] {
-        ["All Stores"] + Array(Set(localCatalog.flatMap(\.stores))).sorted()
+        let candidates = localCatalog
+            + remoteSearchResults
+            + (deepSearchResult.map { [$0] } ?? [])
+        return ["All Stores"] + Array(Set(candidates.flatMap(\.stores))).sorted()
     }
 
     var localProductResults: [Product] {
@@ -288,6 +308,15 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func resetBarcodeLookupState(clearManualBarcode: Bool = false) {
+        barcodeLookupResult = nil
+        barcodeLookupError = nil
+        isLookingUpBarcode = false
+        if clearManualBarcode {
+            manualBarcode = ""
+        }
+    }
+
     func clearSearch() {
         query = ""
         remoteSearchResults = []
@@ -321,6 +350,41 @@ final class AppStore: ObservableObject {
 
     func product(withID id: String) -> Product? {
         localCatalog.first(where: { $0.id == id })
+    }
+
+    func isFavorite(_ product: Product) -> Bool {
+        favoriteProductKeys.contains(product.canonicalLookupKey)
+    }
+
+    func toggleFavorite(_ product: Product) {
+        mergeIntoCache([product])
+        let key = product.canonicalLookupKey
+        if favoriteProductKeys.contains(key) {
+            favoriteProductKeys.remove(key)
+        } else {
+            favoriteProductKeys.insert(key)
+        }
+    }
+
+    func resolvedProduct(for product: Product) -> Product {
+        if let exact = localCatalog.first(where: { $0.id == product.id }) {
+            return exact
+        }
+
+        let canonicalMatches = localCatalog.filter { $0.canonicalLookupKey == product.canonicalLookupKey }
+        if let canonicalBest = canonicalMatches.max(by: preferredProductOrder(lhs:rhs:)) {
+            return canonicalBest
+        }
+
+        let variants = Set(BarcodeNormalizer.variants(for: product.barcode))
+        if !variants.isEmpty,
+           let barcodeBest = localCatalog
+            .filter({ variants.contains(BarcodeNormalizer.digitsOnly(from: $0.barcode)) })
+            .max(by: preferredProductOrder(lhs:rhs:)) {
+            return barcodeBest
+        }
+
+        return product
     }
 
     func enrich(product: Product, scope: DeepSearchScope) async {
@@ -424,22 +488,166 @@ final class AppStore: ObservableObject {
         goals.setMacroPercents(protein: protein, carbs: carbs, fat: fat)
     }
 
-    func saveMeal(name: String, selections: [String: Double]) {
-        let components = mealBuilderProducts.compactMap { product -> MealComponent? in
+    func saveMeal(name: String, selections: [String: Double], availableProducts: [Product]? = nil) {
+        let productPool = deduplicatedProductsByID((availableProducts ?? mealBuilderProducts) + mealBuilderProducts)
+        let components = productPool.compactMap { product -> MealComponent? in
             guard let servings = selections[product.id], servings > 0 else { return nil }
             return MealComponent(product: product, servings: servings)
         }
         guard !components.isEmpty else { return }
-        meals.insert(SavedMeal(name: name, components: components), at: 0)
+        meals.insert(
+            SavedMeal(
+                name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Custom Meal" : name,
+                components: components
+            ),
+            at: 0
+        )
+    }
+
+    func updateMeal(mealID: String, name: String, selections: [String: Double], availableProducts: [Product]? = nil) {
+        guard let index = meals.firstIndex(where: { $0.id == mealID }) else { return }
+        let productPool = deduplicatedProductsByID((availableProducts ?? mealBuilderProducts) + mealBuilderProducts)
+        let components = productPool.compactMap { product -> MealComponent? in
+            guard let servings = selections[product.id], servings > 0 else { return nil }
+            return MealComponent(product: product, servings: servings)
+        }
+        guard !components.isEmpty else { return }
+        meals[index].name = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Custom Meal" : name
+        meals[index].components = components
+    }
+
+    @discardableResult
+    func createMeal(name: String, with product: Product, servings: Double = 1) -> SavedMeal? {
+        guard servings > 0 else { return nil }
+        mergeIntoCache([product])
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedName = trimmedName.isEmpty ? "\(product.name) Meal" : trimmedName
+        let meal = SavedMeal(
+            name: resolvedName,
+            components: [MealComponent(product: product, servings: servings)]
+        )
+        meals.insert(meal, at: 0)
+        return meal
+    }
+
+    func addProduct(_ product: Product, servings: Double = 1, toMealID mealID: String) {
+        guard servings > 0 else { return }
+        guard let index = meals.firstIndex(where: { $0.id == mealID }) else { return }
+        mergeIntoCache([product])
+
+        if let componentIndex = meals[index].components.firstIndex(where: { $0.product.id == product.id }) {
+            meals[index].components[componentIndex].servings += servings
+        } else {
+            meals[index].components.append(MealComponent(product: product, servings: servings))
+        }
+    }
+
+    func deleteMeal(mealID: String) {
+        meals.removeAll { $0.id == mealID }
+    }
+
+    @discardableResult
+    func saveManualProduct(
+        existingProductID: String? = nil,
+        name: String,
+        brand: String,
+        barcode: String,
+        servingDescription: String,
+        ingredientsText: String,
+        calories: Int,
+        protein: Double,
+        carbs: Double,
+        fat: Double,
+        fiber: Double,
+        storesText: String,
+        imageURLText: String
+    ) -> Product {
+        let existing = existingProductID.flatMap { id in
+            product(withID: id)
+                ?? cachedProducts.first(where: { $0.id == id })
+                ?? localCatalog.first(where: { $0.id == id })
+        }
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBrand = brand.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedServing = servingDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let ingredients = ingredientsText
+            .split(whereSeparator: { $0 == "," || $0 == ";" || $0 == "\n" })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let stores = storesText
+            .split(whereSeparator: { $0 == "," || $0 == ";" || $0 == "\n" })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let imageURL = URL(string: imageURLText.trimmingCharacters(in: .whitespacesAndNewlines))
+
+        let manualProduct = Product(
+            id: existing?.id,
+            source: existing?.source ?? .manual,
+            name: trimmedName.isEmpty ? "Custom Product" : trimmedName,
+            brand: trimmedBrand.isEmpty ? "Unknown Brand" : trimmedBrand,
+            barcode: BarcodeNormalizer.digitsOnly(from: barcode),
+            stores: stores,
+            servingDescription: trimmedServing.isEmpty ? "1 serving" : trimmedServing,
+            ingredients: ingredients,
+            nutrition: NutritionFacts(
+                calories: max(0, calories),
+                protein: max(0, protein),
+                carbs: max(0, carbs),
+                fat: max(0, fat),
+                fiber: max(0, fiber)
+            ),
+            imageURL: imageURL,
+            userEditedAt: .now,
+            lastUpdatedAt: .now
+        )
+
+        mergeIntoCache([manualProduct])
+        if let currentDeepSearchResult = deepSearchResult,
+           isSameProductIdentity(lhs: currentDeepSearchResult, rhs: manualProduct) {
+            deepSearchResult = manualProduct
+        }
+        if let currentBarcodeLookupResult = barcodeLookupResult,
+           isSameProductIdentity(lhs: currentBarcodeLookupResult, rhs: manualProduct) {
+            barcodeLookupResult = manualProduct
+        }
+        return manualProduct
+    }
+
+    @discardableResult
+    func addProductFromLink(_ link: String, fallbackQuery: String? = nil) async throws -> Product? {
+        let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed), url.scheme?.hasPrefix("http") == true else {
+            throw CatalogError.invalidQuery
+        }
+
+        if let linked = try await deepSearchService.deepSearchProduct(from: url) {
+            mergeIntoCache([linked])
+            return linked
+        }
+
+        if let fallbackQuery, let fallback = try await deepSearchService.deepSearchProduct(matching: fallbackQuery) {
+            mergeIntoCache([fallback])
+            return fallback
+        }
+
+        return nil
     }
 
     func log(product: Product, servings: Double = 1) {
         let nutrition = product.nutrition * servings
+        let roundedBaseServing = roundedNumericText(in: product.servingDescription)
+        let roundedServingText = servings == 1
+            ? roundedBaseServing
+            : "\(servings.formatted(.number.precision(.fractionLength(0...2)))) x \(roundedBaseServing)"
         loggedFoods.insert(
             LoggedFood(
                 title: product.name,
-                servingText: servings == 1 ? product.servingDescription : "\(servings.formatted()) x \(product.servingDescription)",
+                servingText: roundedServingText,
                 sourceProductIDs: [product.id],
+                sourceProductID: product.id,
+                loggedServings: servings,
+                baseServingDescription: roundedBaseServing,
                 nutrition: nutrition,
                 analysis: analysis(for: product),
                 loggedAt: .now
@@ -455,6 +663,9 @@ final class AppStore: ObservableObject {
                 title: meal.name,
                 servingText: "Custom meal",
                 sourceProductIDs: meal.components.map(\.product.id),
+                sourceProductID: nil,
+                loggedServings: nil,
+                baseServingDescription: nil,
                 nutrition: meal.nutrition,
                 analysis: analysis(for: meal),
                 loggedAt: .now
@@ -467,12 +678,97 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func deleteLoggedFood(entryID: String) {
+        loggedFoods.removeAll { $0.id == entryID }
+    }
+
+    func updateLoggedFoodServing(entryID: String, servings: Double) {
+        guard let index = loggedFoods.firstIndex(where: { $0.id == entryID }) else { return }
+        guard servings > 0 else { return }
+
+        var entry = loggedFoods[index]
+        if entry.sourceProductID == nil, entry.sourceProductIDs.count > 1 {
+            return
+        }
+        let effectiveProductID = entry.sourceProductID ?? entry.sourceProductIDs.first
+        if let effectiveProductID,
+           let product = product(withID: effectiveProductID) {
+            entry.loggedServings = servings
+            let roundedBaseServing = roundedNumericText(in: product.servingDescription)
+            entry.baseServingDescription = roundedBaseServing
+            entry.servingText = servings == 1
+                ? roundedBaseServing
+                : "\(servings.formatted(.number.precision(.fractionLength(0...2)))) x \(roundedBaseServing)"
+            entry.nutrition = product.nutrition * servings
+            entry.analysis = analysis(for: product)
+            loggedFoods[index] = entry
+            return
+        }
+
+        if let previousServings = entry.loggedServings, previousServings > 0 {
+            let multiplier = servings / previousServings
+            entry.nutrition = entry.nutrition * multiplier
+            let baseDescription = roundedNumericText(in: entry.baseServingDescription ?? entry.servingText)
+            entry.baseServingDescription = baseDescription
+            entry.servingText = servings == 1
+                ? baseDescription
+                : "\(servings.formatted(.number.precision(.fractionLength(0...2)))) x \(baseDescription)"
+            entry.loggedServings = servings
+            loggedFoods[index] = entry
+        }
+    }
+
     private func matchesFilters(_ product: Product) -> Bool {
-        let matchesStore = selectedStoreFilter == "All Stores" || product.stores.contains(selectedStoreFilter)
+        let matchesStore = storeFilterMatches(product: product)
         let rating = analysis(for: product).rating
         let matchesDiet = !onlyShowCompatible || rating != .red
         let matchesConfidence = !hideCautionOrIncomplete || rating == .green
         return matchesStore && matchesDiet && matchesConfidence
+    }
+
+    private func storeFilterMatches(product: Product) -> Bool {
+        guard selectedStoreFilter != "All Stores" else { return true }
+
+        let selectedNorm = normalizeStoreName(selectedStoreFilter)
+        guard !selectedNorm.isEmpty else { return true }
+
+        let candidateStores = product.stores.map(normalizeStoreName).filter { !$0.isEmpty }
+        if candidateStores.isEmpty {
+            // Store metadata is often missing from catalog APIs; avoid empty-result dead ends.
+            return true
+        }
+
+        if candidateStores.contains(where: { $0 == selectedNorm || $0.contains(selectedNorm) || selectedNorm.contains($0) }) {
+            return true
+        }
+
+        let aliases = storeAliases(for: selectedNorm)
+        return candidateStores.contains { candidate in
+            aliases.contains(where: { alias in
+                candidate == alias || candidate.contains(alias) || alias.contains(candidate)
+            })
+        }
+    }
+
+    private func normalizeStoreName(_ value: String) -> String {
+        value
+            .lowercased()
+            .replacingOccurrences(of: "&", with: "and")
+            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func storeAliases(for normalizedStore: String) -> [String] {
+        switch normalizedStore {
+        case "whole foods", "whole foods market":
+            return ["whole foods", "whole foods market", "wholefoods"]
+        case "trader joes", "trader joe s":
+            return ["trader joes", "trader joe s", "trader joe"]
+        case "sprouts", "sprouts farmers market":
+            return ["sprouts", "sprouts farmers market"]
+        default:
+            return [normalizedStore]
+        }
     }
 
     private func matchesSearchQuery(_ product: Product) -> Bool {
@@ -543,6 +839,7 @@ final class AppStore: ObservableObject {
     }
 
     private func combinedRankingScore(for product: Product) -> Int {
+        let favoriteBoost = isFavorite(product) ? 80 : 0
         let recentBoost = loggedFoods.contains { $0.sourceProductIDs.contains(product.id) } ? 25 : 0
         let usageBoost = usageCounts[product.id, default: 0] * 5
         let completenessBoost = productQualityScore(for: product)
@@ -581,9 +878,10 @@ final class AppStore: ObservableObject {
         case .upcItemDB: sourceBoost = 1
         case .usda: sourceBoost = 2
         case .deepSearch: sourceBoost = 3
+        case .manual: sourceBoost = 5
         }
         let completenessPenalty = product.isLowConfidenceCatalogEntry ? -30 : 0
-        return recentBoost + usageBoost + completenessBoost + ratingBoost + queryBoost + sourceBoost + completenessPenalty
+        return favoriteBoost + recentBoost + usageBoost + completenessBoost + ratingBoost + queryBoost + sourceBoost + completenessPenalty
     }
 
     private func deduplicatedProductsByID(_ products: [Product]) -> [Product] {
@@ -629,7 +927,29 @@ final class AppStore: ObservableObject {
     }
 
     private func productQualityScore(for product: Product) -> Int {
-        product.dataCompletenessScore * 6
+        let userEditedBoost = product.isUserEdited ? 40 : 0
+        return (product.dataCompletenessScore * 6) + userEditedBoost
+    }
+
+    private func preferredProductOrder(lhs: Product, rhs: Product) -> Bool {
+        let lhsScore = productQualityScore(for: lhs)
+        let rhsScore = productQualityScore(for: rhs)
+        if lhsScore != rhsScore {
+            return lhsScore < rhsScore
+        }
+        return lhs.lastUpdatedAt < rhs.lastUpdatedAt
+    }
+
+    private func isSameProductIdentity(lhs: Product, rhs: Product) -> Bool {
+        if lhs.id == rhs.id { return true }
+        if lhs.canonicalLookupKey == rhs.canonicalLookupKey { return true }
+
+        let lhsBarcode = BarcodeNormalizer.digitsOnly(from: lhs.barcode)
+        let rhsBarcode = BarcodeNormalizer.digitsOnly(from: rhs.barcode)
+        if !lhsBarcode.isEmpty, lhsBarcode == rhsBarcode {
+            return true
+        }
+        return false
     }
 
     private func runDeepSearch(for query: String) async {
@@ -1006,7 +1326,7 @@ final class AppStore: ObservableObject {
 
     private func summarizeNutrition(_ nutrition: NutritionFacts) -> String {
         guard nutrition != .zero else { return "Missing" }
-        return "\(nutrition.calories) cal, \(Int(nutrition.protein.rounded()))g P, \(Int(nutrition.carbs.rounded()))g C, \(Int(nutrition.fat.rounded()))g F"
+        return "\(nutrition.calories) cal, \(Int(nutrition.protein.rounded()))g P, \(Int(nutrition.carbs.rounded()))g C, \(Int(nutrition.fat.rounded()))g F, \(Int(nutrition.fiber.rounded()))g Fi"
     }
 
     private func setupPersistence() {
@@ -1028,6 +1348,9 @@ final class AppStore: ObservableObject {
         $usageCounts
             .sink { [weak self] _ in self?.persistState() }
             .store(in: &cancellables)
+        $favoriteProductKeys
+            .sink { [weak self] _ in self?.persistState() }
+            .store(in: &cancellables)
     }
 
     private func persistState() {
@@ -1037,6 +1360,7 @@ final class AppStore: ObservableObject {
                 selectedDiet: selectedDiet,
                 goals: goals,
                 cachedProducts: cachedProducts,
+                favoriteProductKeys: Array(favoriteProductKeys),
                 meals: meals,
                 loggedFoods: loggedFoods,
                 usageCounts: usageCounts,
@@ -1064,5 +1388,24 @@ final class AppStore: ObservableObject {
     private func appendDeepSearchLog(_ message: String) {
         let timestamp = Date.now.formatted(date: .omitted, time: .standard)
         deepSearchDebugLog.append("[\(timestamp)] \(message)")
+    }
+
+    private func roundedNumericText(in text: String) -> String {
+        let pattern = #"\d+(?:\.\d+)?"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+        let originalRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        let matches = regex.matches(in: text, options: [], range: originalRange).reversed()
+        var result = text
+        for match in matches {
+            guard let sourceRange = Range(match.range, in: text),
+                  let numericValue = Double(text[sourceRange]) else {
+                continue
+            }
+            let replacement = numericValue.formatted(.number.precision(.fractionLength(0...2)))
+            if let resultRange = Range(match.range, in: result) {
+                result.replaceSubrange(resultRange, with: replacement)
+            }
+        }
+        return result
     }
 }

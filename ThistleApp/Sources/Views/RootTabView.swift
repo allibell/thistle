@@ -1,14 +1,17 @@
 import SwiftUI
 
 struct RootTabView: View {
+    @EnvironmentObject private var store: AppStore
+
     var body: some View {
-        TabView {
+        TabView(selection: $store.selectedTab) {
             NavigationStack {
                 SearchView()
             }
             .tabItem {
                 Label("Search", systemImage: "magnifyingglass")
             }
+            .tag(AppTab.search)
 
             NavigationStack {
                 ScanView()
@@ -16,6 +19,7 @@ struct RootTabView: View {
             .tabItem {
                 Label("Scan", systemImage: "barcode.viewfinder")
             }
+            .tag(AppTab.scan)
 
             NavigationStack {
                 DiaryView()
@@ -23,6 +27,7 @@ struct RootTabView: View {
             .tabItem {
                 Label("Diary", systemImage: "list.clipboard")
             }
+            .tag(AppTab.diary)
 
             NavigationStack {
                 MealsView()
@@ -30,6 +35,7 @@ struct RootTabView: View {
             .tabItem {
                 Label("Meals", systemImage: "fork.knife")
             }
+            .tag(AppTab.meals)
 
             NavigationStack {
                 GoalsView()
@@ -37,6 +43,7 @@ struct RootTabView: View {
             .tabItem {
                 Label("Goals", systemImage: "target")
             }
+            .tag(AppTab.goals)
         }
         .tint(ThistleTheme.primaryGreen)
         .background(ThistleTheme.canvas.ignoresSafeArea())

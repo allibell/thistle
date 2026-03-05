@@ -5,12 +5,18 @@ import UIKit
 
 struct SearchView: View {
     @EnvironmentObject private var store: AppStore
+    @State private var showingAddProductSheet = false
+    @State private var showingManualProductSheet = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 filters
                 searchActions
+
+                if store.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !store.favoriteProducts.isEmpty {
+                    favoritesSection
+                }
 
                 if store.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !store.recentHistoryProducts.isEmpty {
                     recentHistorySection
@@ -37,7 +43,7 @@ struct SearchView: View {
                 }
 
                 if store.hasSubmittedSearch && store.searchResults.isEmpty && !store.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    deepSearchButton
+                    noResultsActions
                 }
 
                 if store.isDeepSearching && !store.deepSearchDebugLog.isEmpty {
@@ -45,12 +51,7 @@ struct SearchView: View {
                 }
 
                 ForEach(store.searchResults) { product in
-                    NavigationLink {
-                        ProductDetailView(product: product)
-                    } label: {
-                        ProductCard(product: product, analysis: store.analysis(for: product))
-                    }
-                    .buttonStyle(.plain)
+                    productSearchCard(for: product)
                 }
             }
             .padding()
@@ -75,6 +76,20 @@ struct SearchView: View {
             if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 store.clearSearch()
             }
+        }
+        .sheet(isPresented: $showingAddProductSheet) {
+            ProductEntrySheet(
+                existingProduct: nil,
+                defaultQuery: store.query,
+                allowLinkMode: true
+            )
+        }
+        .sheet(isPresented: $showingManualProductSheet) {
+            ProductEntrySheet(
+                existingProduct: nil,
+                defaultQuery: store.query,
+                allowLinkMode: false
+            )
         }
     }
 
@@ -108,27 +123,40 @@ struct SearchView: View {
     }
 
     private var searchActions: some View {
-        HStack {
-            Button {
-                Task { await store.performSearch() }
-            } label: {
-                if store.isSearching {
-                    ProgressView()
-                        .tint(.white)
-                } else {
-                    Text("Search Online Catalog")
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Button {
+                    Task { await store.performSearch() }
+                } label: {
+                    if store.isSearching {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Text("Search Online Catalog")
+                    }
                 }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(store.query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || store.isSearching)
+                .buttonStyle(.borderedProminent)
+                .disabled(store.query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || store.isSearching)
 
-            if store.hasSubmittedSearch {
-                Text("\(store.searchResults.count) foods")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                if store.hasSubmittedSearch {
+                    Text("\(store.searchResults.count) foods")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
             }
 
-            Spacer()
+            Button("BETA: Deep Search") {
+                Task { await store.runManualDeepSearchForCurrentQuery() }
+            }
+            .buttonStyle(.bordered)
+            .disabled(store.query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || store.isDeepSearching)
+
+            Button("Add Manually") {
+                showingManualProductSheet = true
+            }
+            .buttonStyle(.bordered)
         }
     }
 
@@ -148,22 +176,62 @@ struct SearchView: View {
                 .font(.headline)
 
             ForEach(store.recentHistoryProducts) { product in
-                NavigationLink {
-                    ProductDetailView(product: product)
-                } label: {
-                    ProductCard(product: product, analysis: store.analysis(for: product))
-                }
-                .buttonStyle(.plain)
+                productSearchCard(for: product)
             }
         }
     }
 
-    private var deepSearchButton: some View {
-        Button("BETA: Find With Deep Search") {
-            Task { await store.runManualDeepSearchForCurrentQuery() }
+    private var favoritesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Favorites")
+                .font(.headline)
+
+            ForEach(store.favoriteProducts.prefix(8)) { product in
+                productSearchCard(for: product)
+            }
         }
-        .buttonStyle(.bordered)
-        .disabled(store.query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || store.isDeepSearching)
+    }
+
+    private func productSearchCard(for product: Product) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            NavigationLink {
+                ProductDetailView(product: product)
+            } label: {
+                ProductCard(product: product, analysis: store.analysis(for: product))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var noResultsActions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if hasAttemptedDeepSearchForCurrentQuery {
+                Button("Add Product (Link)") {
+                    showingAddProductSheet = true
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button("Try Deep Search Again") {
+                    Task { await store.runManualDeepSearchForCurrentQuery() }
+                }
+                .buttonStyle(.bordered)
+                .disabled(store.query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || store.isDeepSearching)
+            } else {
+                Text("No good matches yet. Try BETA: Deep Search above, or add manually.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var hasAttemptedDeepSearchForCurrentQuery: Bool {
+        let trimmedQuery = store.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else { return false }
+        return store.deepSearchDebugLog.contains { entry in
+            entry.localizedCaseInsensitiveContains("Starting manual deep search for query: \(trimmedQuery)")
+                || entry.localizedCaseInsensitiveContains("Used cached deep search result for query: \(trimmedQuery)")
+                || entry.localizedCaseInsensitiveContains("Used cached deep search miss for query: \(trimmedQuery)")
+        }
     }
 
     private var debugSection: some View {
@@ -248,4 +316,72 @@ struct SearchView: View {
         return nil
     }
 #endif
+}
+
+struct AddProductToMealSheet: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+    let product: Product
+    @State private var servings: Double
+    @State private var newMealName = ""
+
+    init(product: Product, servings: Double = 1) {
+        self.product = product
+        _servings = State(initialValue: servings)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Product") {
+                    Text(product.name)
+                    Text(product.brand)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Servings To Add") {
+                    Stepper(
+                        "\(servings.formatted(.number.precision(.fractionLength(0...2))))",
+                        value: $servings,
+                        in: 0.5...12,
+                        step: 0.5
+                    )
+                }
+
+                Section("Add To Existing Meal") {
+                    if store.meals.isEmpty {
+                        Text("No saved meals yet.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(store.meals) { meal in
+                            Button(meal.name) {
+                                store.addProduct(product, servings: servings, toMealID: meal.id)
+                                store.selectedTab = .meals
+                                dismiss()
+                            }
+                        }
+                    }
+                }
+
+                Section("Create New Meal") {
+                    TextField("Meal name", text: $newMealName)
+                    Button("Create Meal + Add Product") {
+                        _ = store.createMeal(name: newMealName, with: product, servings: servings)
+                        store.selectedTab = .meals
+                        dismiss()
+                    }
+                }
+            }
+            .navigationTitle("Add To Meal")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
 }

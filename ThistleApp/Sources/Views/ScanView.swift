@@ -4,6 +4,7 @@ import VisionKit
 struct ScanView: View {
     @EnvironmentObject private var store: AppStore
     @State private var scannedCode: String?
+    @State private var lookupTask: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -30,6 +31,15 @@ struct ScanView: View {
                         ProductCard(product: resolvedProduct, analysis: store.analysis(for: resolvedProduct))
                     }
                     .buttonStyle(.plain)
+
+                    HStack {
+                        Spacer()
+                        Button("Scan Another") {
+                            resetForFreshScan(clearManualBarcode: false)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
                 } else if let resolvedCode = scannedCode ?? (!store.manualBarcode.isEmpty ? store.manualBarcode : nil) {
                     lookupResult(for: resolvedCode)
                 }
@@ -38,10 +48,40 @@ struct ScanView: View {
         }
         .background(ThistleTheme.canvas.ignoresSafeArea())
         .thistleNavigationTitle("Scan")
+        .refreshable {
+            resetForFreshScan(clearManualBarcode: true)
+        }
+        .onAppear {
+            if store.selectedTab == .scan {
+                resetForFreshScan(clearManualBarcode: false)
+            }
+        }
         .onChange(of: scannedCode) { _, newValue in
             guard let newValue else { return }
-            Task { await store.lookupBarcode(newValue) }
+            lookupTask?.cancel()
+            lookupTask = Task {
+                await store.lookupBarcode(newValue)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    scannedCode = nil
+                }
+            }
         }
+        .onChange(of: store.selectedTab) { _, newValue in
+            guard newValue == .scan else { return }
+            resetForFreshScan(clearManualBarcode: false)
+        }
+        .onDisappear {
+            lookupTask?.cancel()
+            lookupTask = nil
+        }
+    }
+
+    private func resetForFreshScan(clearManualBarcode: Bool) {
+        lookupTask?.cancel()
+        lookupTask = nil
+        scannedCode = nil
+        store.resetBarcodeLookupState(clearManualBarcode: clearManualBarcode)
     }
 
     private var unsupportedView: some View {
@@ -120,6 +160,8 @@ struct BarcodeScannerView: UIViewControllerRepresentable {
 
     final class Coordinator: NSObject, DataScannerViewControllerDelegate {
         @Binding var scannedCode: String?
+        private var lastScannedPayload: String?
+        private var lastScannedAt: Date = .distantPast
 
         init(scannedCode: Binding<String?>) {
             _scannedCode = scannedCode
@@ -130,7 +172,7 @@ struct BarcodeScannerView: UIViewControllerRepresentable {
             didTapOn item: RecognizedItem
         ) {
             if case .barcode(let barcode) = item {
-                scannedCode = barcode.payloadStringValue
+                submitBarcodePayload(barcode.payloadStringValue)
             }
         }
 
@@ -141,7 +183,22 @@ struct BarcodeScannerView: UIViewControllerRepresentable {
         ) {
             guard let first = addedItems.first else { return }
             if case .barcode(let barcode) = first {
-                scannedCode = barcode.payloadStringValue
+                submitBarcodePayload(barcode.payloadStringValue)
+            }
+        }
+
+        private func submitBarcodePayload(_ payload: String?) {
+            guard let payload, !payload.isEmpty else { return }
+            let now = Date()
+            if lastScannedPayload == payload, now.timeIntervalSince(lastScannedAt) < 0.8 {
+                return
+            }
+            lastScannedPayload = payload
+            lastScannedAt = now
+
+            scannedCode = nil
+            DispatchQueue.main.async {
+                self.scannedCode = payload
             }
         }
     }

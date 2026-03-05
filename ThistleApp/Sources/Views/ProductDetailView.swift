@@ -5,13 +5,17 @@ struct ProductDetailView: View {
     @EnvironmentObject private var store: AppStore
     var product: Product
     @State private var servings = 1.0
+    @State private var servingInput = "1"
+    @State private var servingInputError: String?
     @State private var expandedIngredientDiffIDs: Set<String> = []
     @State private var didJustLogFood = false
     @State private var logConfirmationTask: Task<Void, Never>?
     @State private var preferredServingUnit: ServingUnitPreference = .native
+    @State private var showingManualEditor = false
+    @State private var showingAddToMealSheet = false
 
     var body: some View {
-        let currentProduct = store.product(withID: product.id) ?? product
+        let currentProduct = store.resolvedProduct(for: product)
         let analysis = store.analysis(for: currentProduct)
         let proposal = proposal(for: currentProduct)
         ScrollView {
@@ -47,6 +51,21 @@ struct ProductDetailView: View {
                     .buttonStyle(.bordered)
                     .disabled(store.isDeepSearching)
 
+                    Button("Enter Manual Info") {
+                        showingManualEditor = true
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        store.toggleFavorite(currentProduct)
+                    } label: {
+                        Label(
+                            store.isFavorite(currentProduct) ? "Favorited" : "Add To Favorites",
+                            systemImage: store.isFavorite(currentProduct) ? "heart.fill" : "heart"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+
                     storesSection(for: currentProduct)
 
                     macrosSection(for: currentProduct)
@@ -68,15 +87,51 @@ struct ProductDetailView: View {
                         .pickerStyle(.segmented)
                     }
 
-                    Stepper(value: $servings, in: 0.5...6, step: 0.5) {
+                    Stepper(value: $servings, in: 0.1...12, step: 0.5) {
                         Text("\(formattedServingCount(servings)) x \(formattedServingDescription(currentProduct.servingDescription))")
                     }
+                    .onChange(of: servings) { _, newValue in
+                        servingInput = formattedServingCount(newValue)
+                        servingInputError = nil
+                    }
+
+                    HStack(spacing: 8) {
+                        TextField("Servings", text: $servingInput)
+                            .keyboardType(.numbersAndPunctuation)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit {
+                                _ = applyServingInput()
+                            }
+
+                        Button("Set") {
+                            _ = applyServingInput()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    Text("Use decimals or fractions, e.g. 0.1 or 1/2.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if let servingInputError {
+                        Text(servingInputError)
+                            .font(.caption)
+                            .foregroundStyle(ThistleTheme.warning)
+                    }
+
                     HStack(spacing: 10) {
                         Button("Log Food") {
+                            guard applyServingInput() else { return }
                             store.log(product: currentProduct, servings: servings)
                             showLogConfirmation()
                         }
                         .buttonStyle(.borderedProminent)
+
+                        Button("Add To Meal") {
+                            guard applyServingInput() else { return }
+                            showingAddToMealSheet = true
+                        }
+                        .buttonStyle(.bordered)
 
                         if didJustLogFood {
                             Label("Logged!", systemImage: "checkmark.circle.fill")
@@ -110,6 +165,7 @@ struct ProductDetailView: View {
         .thistleNavigationTitle("Details")
         .onAppear {
             syncPreferredServingUnit(for: product.servingDescription)
+            servingInput = formattedServingCount(servings)
         }
         .onChange(of: currentProduct.servingDescription) { _, newValue in
             syncPreferredServingUnit(for: newValue)
@@ -117,6 +173,16 @@ struct ProductDetailView: View {
         .onDisappear {
             logConfirmationTask?.cancel()
             logConfirmationTask = nil
+        }
+        .sheet(isPresented: $showingManualEditor) {
+            ProductEntrySheet(
+                existingProduct: currentProduct,
+                defaultQuery: currentProduct.name,
+                allowLinkMode: false
+            )
+        }
+        .sheet(isPresented: $showingAddToMealSheet) {
+            AddProductToMealSheet(product: currentProduct, servings: servings)
         }
     }
 
@@ -135,6 +201,54 @@ struct ProductDetailView: View {
                 }
             }
         }
+    }
+
+    @discardableResult
+    private func applyServingInput() -> Bool {
+        guard let parsed = parseServingAmount(servingInput) else {
+            servingInputError = "Enter a valid serving amount like 0.1 or 1/2."
+            return false
+        }
+
+        let clamped = min(max(parsed, 0.1), 12)
+        servings = clamped
+        servingInput = formattedServingCount(clamped)
+        servingInputError = nil
+        return true
+    }
+
+    private func parseServingAmount(_ rawValue: String) -> Double? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if let decimal = Double(trimmed), decimal > 0 {
+            return decimal
+        }
+
+        if trimmed.contains("/") {
+            let parts = trimmed.split(separator: " ").map(String.init)
+            if parts.count == 1, let fraction = parseFraction(parts[0]) {
+                return fraction
+            }
+            if parts.count == 2, let whole = Double(parts[0]), let fraction = parseFraction(parts[1]) {
+                let value = whole + fraction
+                return value > 0 ? value : nil
+            }
+        }
+
+        return nil
+    }
+
+    private func parseFraction(_ token: String) -> Double? {
+        let pieces = token.split(separator: "/")
+        guard pieces.count == 2,
+              let numerator = Double(pieces[0]),
+              let denominator = Double(pieces[1]),
+              denominator != 0 else {
+            return nil
+        }
+        let value = numerator / denominator
+        return value > 0 ? value : nil
     }
 
     private func syncPreferredServingUnit(for servingDescription: String) {

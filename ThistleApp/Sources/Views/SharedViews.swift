@@ -86,9 +86,19 @@ struct ProductCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(product.name)
                         .font(.headline)
-                    Text(product.brand)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Text(product.brand)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        if product.isUserEdited {
+                            Text("USER EDITED")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(ThistleTheme.warning.opacity(0.2), in: Capsule())
+                                .foregroundStyle(ThistleTheme.warning)
+                        }
+                    }
                 }
                 Spacer()
                 RatingBadge(rating: analysis.rating)
@@ -123,8 +133,9 @@ extension View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text(title)
-                        .font(.headline.weight(.bold))
+                        .font(.title2.weight(.bold))
                         .foregroundStyle(ThistleTheme.blossomPurple)
+                        .padding(.top, 6)
                 }
             }
     }

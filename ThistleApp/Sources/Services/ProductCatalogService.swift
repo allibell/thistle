@@ -63,6 +63,7 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
     private func queryVariants(for query: String) -> [String] {
         let normalized = query.lowercased()
         var variants: [String] = [query]
+        let ingredientIntent = isIngredientIntent(query)
 
         let terms = normalized
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
@@ -94,6 +95,12 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
             variants.append("malk vanilla almond milk")
         }
 
+        if ingredientIntent {
+            variants.append("\(query) raw")
+            variants.append("\(query) plain")
+            variants.append("\(query) unsalted")
+        }
+
         return Array(NSOrderedSet(array: variants.compactMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty }).compactMap { $0 as? String })
     }
 
@@ -112,14 +119,67 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
 
     private func rankingScore(for product: Product, query: String) -> Int {
         let haystack = "\(product.brand) \(product.name)".lowercased()
-        let terms = query
-            .lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { $0.count >= 2 }
+        let terms = normalizedTerms(query)
         let matches = terms.reduce(into: 0) { total, term in
             if haystack.contains(term) { total += 1 }
         }
-        return (matches * 20) + (product.dataCompletenessScore * 8)
+        var score = (matches * 20) + (product.dataCompletenessScore * 8)
+
+        if isIngredientIntent(query) {
+            score += ingredientSimplicityScore(for: product, queryTerms: Set(terms))
+        }
+
+        return score
+    }
+
+    private func normalizedTerms(_ text: String) -> [String] {
+        text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count >= 2 }
+    }
+
+    private func isIngredientIntent(_ query: String) -> Bool {
+        let terms = normalizedTerms(query)
+        guard !terms.isEmpty, terms.count <= 2 else { return false }
+        let dishTerms: Set<String> = [
+            "salad", "soup", "pizza", "sandwich", "tortelloni", "quiche", "lasagna",
+            "bowl", "meal", "wrap", "pasta", "dish", "recipe", "frozen", "prepared"
+        ]
+        return terms.allSatisfy { !dishTerms.contains($0) }
+    }
+
+    private func ingredientSimplicityScore(for product: Product, queryTerms: Set<String>) -> Int {
+        let nameTerms = Set(normalizedTerms(product.name))
+        let overlap = queryTerms.intersection(nameTerms).count
+        var score = overlap * 30
+
+        if overlap == queryTerms.count, !queryTerms.isEmpty {
+            score += 35
+        }
+
+        let normalizedName = product.name
+            .lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedQuery = queryTerms.sorted().joined(separator: " ")
+        if normalizedName == normalizedQuery || normalizedName.hasPrefix(normalizedQuery + " ") {
+            score += 45
+        }
+
+        let dishSignals = [
+            "tortelloni", "quiche", "pizza", "salad", "meal", "prepared", "frozen",
+            "lasagna", "burrito", "sandwich", "soup", "dhal", "curry", "ricotta", "feta"
+        ]
+        for signal in dishSignals where normalizedName.contains(signal) {
+            score -= 45
+        }
+
+        if product.source == .usda {
+            score += 20
+        }
+
+        return score
     }
 }
 
@@ -244,6 +304,8 @@ private struct OpenFoodFactsNutriments: Decodable {
     var carbs100g: Double?
     var fatServing: Double?
     var fat100g: Double?
+    var fiberServing: Double?
+    var fiber100g: Double?
 
     enum CodingKeys: String, CodingKey {
         case caloriesServing = "energy-kcal_serving"
@@ -254,6 +316,8 @@ private struct OpenFoodFactsNutriments: Decodable {
         case carbs100g = "carbohydrates_100g"
         case fatServing = "fat_serving"
         case fat100g = "fat_100g"
+        case fiberServing = "fiber_serving"
+        case fiber100g = "fiber_100g"
     }
 
     var nutritionFacts: NutritionFacts {
@@ -261,7 +325,8 @@ private struct OpenFoodFactsNutriments: Decodable {
             calories: Int((caloriesServing ?? calories100g ?? 0).rounded()),
             protein: proteinServing ?? protein100g ?? 0,
             carbs: carbsServing ?? carbs100g ?? 0,
-            fat: fatServing ?? fat100g ?? 0
+            fat: fatServing ?? fat100g ?? 0,
+            fiber: fiberServing ?? fiber100g ?? 0
         )
     }
 }

@@ -12,6 +12,7 @@ enum DeepSearchScope: String, CaseIterable, Sendable {
 protocol DeepSearchServing: Sendable {
     func deepSearchProduct(matching query: String) async throws -> Product?
     func deepSearchProduct(for product: Product, scope: DeepSearchScope) async throws -> Product?
+    func deepSearchProduct(from url: URL) async throws -> Product?
 }
 
 protocol AIIngredientFallbackServing: Sendable {
@@ -46,6 +47,10 @@ struct DeepSearchService: DeepSearchServing, Sendable {
         let candidates = [await usdaCandidate, await catalogCandidate, await webCandidate, await aiCandidate, heuristicCandidate].compactMap { $0 }
         guard !candidates.isEmpty else { return nil }
         return mergedCandidate(from: candidates, query: trimmed)
+    }
+
+    func deepSearchProduct(from url: URL) async throws -> Product? {
+        try await web.searchProduct(from: url)
     }
 
     func deepSearchProduct(for product: Product, scope: DeepSearchScope) async throws -> Product? {
@@ -329,6 +334,10 @@ private struct WebFallbackClient: Sendable {
     func searchProductUsingImageOCR(matching query: String, preferredPageURLs: [URL] = []) async throws -> Product? {
         let urls = try await candidatePageURLs(for: query, includeSlowRetailerQueries: true, preferredPageURLs: preferredPageURLs)
         return try await bestScrapedProduct(from: urls.prefix(16), query: query, budget: .slow)
+    }
+
+    func searchProduct(from url: URL) async throws -> Product? {
+        try await scrapeProduct(from: url, query: url.absoluteString, budget: .slow)
     }
 
     private func candidatePageURLs(

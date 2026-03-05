@@ -7,6 +7,7 @@ enum ProductSource: String, Codable, Hashable {
     case upcItemDB
     case usda
     case deepSearch
+    case manual
 }
 
 enum DietProfile: String, CaseIterable, Identifiable, Codable {
@@ -67,15 +68,25 @@ struct NutritionFacts: Codable, Hashable {
     var protein: Double
     var carbs: Double
     var fat: Double
+    var fiber: Double
 
-    static let zero = NutritionFacts(calories: 0, protein: 0, carbs: 0, fat: 0)
+    init(calories: Int, protein: Double, carbs: Double, fat: Double, fiber: Double = 0) {
+        self.calories = calories
+        self.protein = protein
+        self.carbs = carbs
+        self.fat = fat
+        self.fiber = fiber
+    }
+
+    static let zero = NutritionFacts(calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0)
 
     static func + (lhs: NutritionFacts, rhs: NutritionFacts) -> NutritionFacts {
         NutritionFacts(
             calories: lhs.calories + rhs.calories,
             protein: lhs.protein + rhs.protein,
             carbs: lhs.carbs + rhs.carbs,
-            fat: lhs.fat + rhs.fat
+            fat: lhs.fat + rhs.fat,
+            fiber: lhs.fiber + rhs.fiber
         )
     }
 
@@ -84,8 +95,26 @@ struct NutritionFacts: Codable, Hashable {
             calories: Int((Double(lhs.calories) * rhs).rounded()),
             protein: lhs.protein * rhs,
             carbs: lhs.carbs * rhs,
-            fat: lhs.fat * rhs
+            fat: lhs.fat * rhs,
+            fiber: lhs.fiber * rhs
         )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case calories
+        case protein
+        case carbs
+        case fat
+        case fiber
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        calories = try container.decodeIfPresent(Int.self, forKey: .calories) ?? 0
+        protein = try container.decodeIfPresent(Double.self, forKey: .protein) ?? 0
+        carbs = try container.decodeIfPresent(Double.self, forKey: .carbs) ?? 0
+        fat = try container.decodeIfPresent(Double.self, forKey: .fat) ?? 0
+        fiber = try container.decodeIfPresent(Double.self, forKey: .fiber) ?? 0
     }
 }
 
@@ -120,6 +149,7 @@ struct Product: Identifiable, Hashable, Codable {
     var ingredients: [String]
     var nutrition: NutritionFacts
     var imageURL: URL?
+    var userEditedAt: Date?
     var lastUpdatedAt: Date
 
     init(
@@ -133,6 +163,7 @@ struct Product: Identifiable, Hashable, Codable {
         ingredients: [String],
         nutrition: NutritionFacts,
         imageURL: URL? = nil,
+        userEditedAt: Date? = nil,
         lastUpdatedAt: Date = .now
     ) {
         self.source = source
@@ -144,6 +175,7 @@ struct Product: Identifiable, Hashable, Codable {
         self.ingredients = ingredients
         self.nutrition = nutrition
         self.imageURL = imageURL
+        self.userEditedAt = userEditedAt
         self.lastUpdatedAt = lastUpdatedAt
         self.id = id ?? Product.makeID(source: source, barcode: barcode, name: name, brand: brand)
     }
@@ -179,7 +211,11 @@ struct Product: Identifiable, Hashable, Codable {
     }
 
     var hasMeaningfulNutrition: Bool {
-        nutrition.calories > 0 || nutrition.protein > 0 || nutrition.carbs > 0 || nutrition.fat > 0
+        nutrition.calories > 0 || nutrition.protein > 0 || nutrition.carbs > 0 || nutrition.fat > 0 || nutrition.fiber > 0
+    }
+
+    var isUserEdited: Bool {
+        userEditedAt != nil
     }
 
     var dataCompletenessScore: Int {
@@ -217,8 +253,17 @@ struct MacroGoals: Codable, Hashable {
     var protein: Double
     var carbs: Double
     var fat: Double
+    var fiber: Double
 
-    static let `default` = MacroGoals(calories: 1800, protein: 120, carbs: 140, fat: 70)
+    init(calories: Int, protein: Double, carbs: Double, fat: Double, fiber: Double = 28) {
+        self.calories = calories
+        self.protein = protein
+        self.carbs = carbs
+        self.fat = fat
+        self.fiber = fiber
+    }
+
+    static let `default` = MacroGoals(calories: 1800, protein: 120, carbs: 140, fat: 70, fiber: 28)
 
     var proteinCalories: Double { protein * 4 }
     var carbCalories: Double { carbs * 4 }
@@ -254,6 +299,23 @@ struct MacroGoals: Codable, Hashable {
     private func grams(forPercent percent: Int, caloriesPerGram: Double) -> Double {
         let allocatedCalories = (Double(calories) * Double(percent)) / 100
         return allocatedCalories / caloriesPerGram
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case calories
+        case protein
+        case carbs
+        case fat
+        case fiber
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        calories = try container.decodeIfPresent(Int.self, forKey: .calories) ?? 1800
+        protein = try container.decodeIfPresent(Double.self, forKey: .protein) ?? 120
+        carbs = try container.decodeIfPresent(Double.self, forKey: .carbs) ?? 140
+        fat = try container.decodeIfPresent(Double.self, forKey: .fat) ?? 70
+        fiber = try container.decodeIfPresent(Double.self, forKey: .fiber) ?? 28
     }
 }
 
@@ -313,6 +375,9 @@ struct LoggedFood: Identifiable, Hashable, Codable {
     var title: String
     var servingText: String
     var sourceProductIDs: [String]
+    var sourceProductID: String?
+    var loggedServings: Double?
+    var baseServingDescription: String?
     var nutrition: NutritionFacts
     var analysis: ProductAnalysis
     var loggedAt: Date
@@ -322,6 +387,9 @@ struct LoggedFood: Identifiable, Hashable, Codable {
         title: String,
         servingText: String,
         sourceProductIDs: [String],
+        sourceProductID: String? = nil,
+        loggedServings: Double? = nil,
+        baseServingDescription: String? = nil,
         nutrition: NutritionFacts,
         analysis: ProductAnalysis,
         loggedAt: Date
@@ -330,6 +398,9 @@ struct LoggedFood: Identifiable, Hashable, Codable {
         self.title = title
         self.servingText = servingText
         self.sourceProductIDs = sourceProductIDs
+        self.sourceProductID = sourceProductID
+        self.loggedServings = loggedServings
+        self.baseServingDescription = baseServingDescription
         self.nutrition = nutrition
         self.analysis = analysis
         self.loggedAt = loggedAt
@@ -370,6 +441,7 @@ struct PersistedAppState: Codable {
     var selectedDiet: DietProfile
     var goals: MacroGoals
     var cachedProducts: [Product]
+    var favoriteProductKeys: [String]
     var meals: [SavedMeal]
     var loggedFoods: [LoggedFood]
     var usageCounts: [String: Int]
@@ -381,6 +453,7 @@ struct PersistedAppState: Codable {
         selectedDiet: DietProfile,
         goals: MacroGoals,
         cachedProducts: [Product],
+        favoriteProductKeys: [String],
         meals: [SavedMeal],
         loggedFoods: [LoggedFood],
         usageCounts: [String: Int],
@@ -391,6 +464,7 @@ struct PersistedAppState: Codable {
         self.selectedDiet = selectedDiet
         self.goals = goals
         self.cachedProducts = cachedProducts
+        self.favoriteProductKeys = favoriteProductKeys
         self.meals = meals
         self.loggedFoods = loggedFoods
         self.usageCounts = usageCounts
@@ -403,6 +477,7 @@ struct PersistedAppState: Codable {
         case selectedDiet
         case goals
         case cachedProducts
+        case favoriteProductKeys
         case meals
         case loggedFoods
         case usageCounts
@@ -416,6 +491,7 @@ struct PersistedAppState: Codable {
         selectedDiet = try container.decodeIfPresent(DietProfile.self, forKey: .selectedDiet) ?? .whole30
         goals = try container.decodeIfPresent(MacroGoals.self, forKey: .goals) ?? .default
         cachedProducts = try container.decodeIfPresent([Product].self, forKey: .cachedProducts) ?? []
+        favoriteProductKeys = try container.decodeIfPresent([String].self, forKey: .favoriteProductKeys) ?? []
         meals = try container.decodeIfPresent([SavedMeal].self, forKey: .meals) ?? []
         loggedFoods = try container.decodeIfPresent([LoggedFood].self, forKey: .loggedFoods) ?? []
         usageCounts = try container.decodeIfPresent([String: Int].self, forKey: .usageCounts) ?? [:]
