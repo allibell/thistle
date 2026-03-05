@@ -168,13 +168,14 @@ struct MealBuilderView: View {
     @State private var mealInferenceMessageIsError = false
     @State private var searchTask: Task<Void, Never>?
     @State private var hasSubmittedProductSearch = false
-    @State private var previewProduct: Product?
     @State private var showingManualIngredientSheet = false
     @State private var showingBarcodeScanner = false
     @State private var scannedBarcode: String?
     @State private var didHydrateExistingMeal = false
     @State private var knownProducts: [Product] = []
     @State private var selectedProductCache: [String: Product] = [:]
+    @State private var servingInputByProduct: [String: String] = [:]
+    @State private var servingInputErrorByProduct: [String: String] = [:]
     private let catalogService: ProductCatalogServing = ProductCatalogService()
     private let deepSearchService: DeepSearchServing = DeepSearchService()
 
@@ -229,7 +230,7 @@ struct MealBuilderView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     } else {
-                        Text("Searches both your local items and online catalog. Long-press a product row to preview full details.")
+                        Text("Searches both your local items and online catalog.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -327,12 +328,6 @@ struct MealBuilderView: View {
                 Task {
                     await handleScannedBarcode(newValue)
                 }
-            }
-            .sheet(item: $previewProduct) { product in
-                NavigationStack {
-                    ProductDetailView(product: product)
-                }
-                .presentationDetents([.medium, .large])
             }
             .sheet(isPresented: $showingManualIngredientSheet, onDismiss: {
                 rebuildKnownProducts()
@@ -577,6 +572,7 @@ struct MealBuilderView: View {
     @ViewBuilder
     private func productRow(_ product: Product) -> some View {
         let productAnalysis = store.analysis(for: product)
+        let isSelected = servingsByProduct[product.id, default: 0] > 0
         HStack {
             VStack(alignment: .leading) {
                 HStack(spacing: 8) {
@@ -596,20 +592,56 @@ struct MealBuilderView: View {
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(ThistleTheme.blossomPurple)
                 }
+
+                HStack(spacing: 8) {
+                    TextField("0.1 or 1/2", text: servingInputBinding(for: product))
+                        .textFieldStyle(.roundedBorder)
+                        .keyboardType(.numbersAndPunctuation)
+                        .frame(maxWidth: 130)
+
+                    Button("Set") {
+                        _ = applyServingInput(for: product, addIfNeeded: false)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button(isSelected ? "Update" : "Add To Meal") {
+                        _ = applyServingInput(for: product, addIfNeeded: true)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+
+                    if isSelected {
+                        Button("Remove", role: .destructive) {
+                            servingsByProduct[product.id] = nil
+                            servingInputByProduct[product.id] = "1"
+                            servingInputErrorByProduct[product.id] = nil
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+
+                if let error = servingInputErrorByProduct[product.id], !error.isEmpty {
+                    Text(error)
+                        .font(.caption2)
+                        .foregroundStyle(ThistleTheme.warning)
+                } else {
+                    Text("Use decimals or fractions, e.g. 0.1 or 1/2.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
             Stepper(
-                "\(servingsByProduct[product.id, default: 0].formatted())",
+                "\(servingsByProduct[product.id, default: 0].formatted(.number.precision(.fractionLength(0...2))))",
                 value: binding(for: product),
-                in: 0...6,
+                in: 0...24,
                 step: 0.5
             )
-            .frame(width: 140)
+            .frame(width: 120)
         }
         .contentShape(Rectangle())
-        .onLongPressGesture(minimumDuration: 0.45) {
-            previewProduct = product
-        }
     }
 
     private func scheduleCatalogSearch(for query: String) {
@@ -625,6 +657,8 @@ struct MealBuilderView: View {
 
     @MainActor
     private func searchCatalog(query: String) async {
+        let queryToken = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !queryToken.isEmpty else { return }
         isSearchingCatalog = true
         defer { isSearchingCatalog = false }
         do {
@@ -640,6 +674,9 @@ struct MealBuilderView: View {
                 combinedResults = deduplicatedProducts(results + rawResults + plainResults)
             }
 
+            guard queryToken == productQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+                return
+            }
             remoteSearchResults = combinedResults
             semanticFallbackProduct = nil
 
@@ -660,9 +697,15 @@ struct MealBuilderView: View {
                     existing: store.mealBuilderProducts + combinedResults
                 )
             }
+            guard queryToken == productQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+                return
+            }
             rebuildKnownProducts()
             searchError = nil
         } catch {
+            guard queryToken == productQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+                return
+            }
             remoteSearchResults = []
             semanticFallbackProduct = nil
             rebuildKnownProducts()
@@ -684,12 +727,97 @@ struct MealBuilderView: View {
 
                 if adjusted <= 0 {
                     servingsByProduct[product.id] = nil
+                    servingInputByProduct[product.id] = "1"
+                    servingInputErrorByProduct[product.id] = nil
                 } else {
                     servingsByProduct[product.id] = adjusted
                     selectedProductCache[product.id] = product
+                    servingInputByProduct[product.id] = formatServing(adjusted)
+                    servingInputErrorByProduct[product.id] = nil
                 }
             }
         )
+    }
+
+    private func servingInputBinding(for product: Product) -> Binding<String> {
+        Binding(
+            get: {
+                if let existing = servingInputByProduct[product.id], !existing.isEmpty {
+                    return existing
+                }
+                let servings = max(servingsByProduct[product.id, default: 1], 0.1)
+                return formatServing(servings)
+            },
+            set: { newValue in
+                servingInputByProduct[product.id] = newValue
+                servingInputErrorByProduct[product.id] = nil
+            }
+        )
+    }
+
+    @discardableResult
+    private func applyServingInput(for product: Product, addIfNeeded: Bool) -> Bool {
+        let rawInput = (servingInputByProduct[product.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsedValue: Double
+
+        if rawInput.isEmpty {
+            if addIfNeeded {
+                parsedValue = max(servingsByProduct[product.id, default: 1], 1)
+            } else {
+                servingInputErrorByProduct[product.id] = "Enter a serving amount."
+                return false
+            }
+        } else if let parsed = parseServingAmount(rawInput) {
+            parsedValue = parsed
+        } else {
+            servingInputErrorByProduct[product.id] = "Enter a valid amount like 0.1 or 1/2."
+            return false
+        }
+
+        let clamped = min(max(parsedValue, 0.1), 24)
+        servingsByProduct[product.id] = clamped
+        selectedProductCache[product.id] = product
+        servingInputByProduct[product.id] = formatServing(clamped)
+        servingInputErrorByProduct[product.id] = nil
+        return true
+    }
+
+    private func parseServingAmount(_ rawValue: String) -> Double? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if let decimal = Double(trimmed), decimal > 0 {
+            return decimal
+        }
+
+        if trimmed.contains("/") {
+            let parts = trimmed.split(separator: " ").map(String.init)
+            if parts.count == 1, let fraction = parseFraction(parts[0]) {
+                return fraction
+            }
+            if parts.count == 2, let whole = Double(parts[0]), let fraction = parseFraction(parts[1]) {
+                let value = whole + fraction
+                return value > 0 ? value : nil
+            }
+        }
+
+        return nil
+    }
+
+    private func parseFraction(_ token: String) -> Double? {
+        let pieces = token.split(separator: "/")
+        guard pieces.count == 2,
+              let numerator = Double(pieces[0]),
+              let denominator = Double(pieces[1]),
+              denominator != 0 else {
+            return nil
+        }
+        let value = numerator / denominator
+        return value > 0 ? value : nil
+    }
+
+    private func formatServing(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0...2)))
     }
 
     private func deduplicatedProducts(_ products: [Product]) -> [Product] {
@@ -724,9 +852,10 @@ struct MealBuilderView: View {
             if haystack.contains(term) { partial += 1 }
         }
         let localUsageBoost = store.usageCounts[product.id, default: 0] * 2
+        let favoriteBoost = store.isFavorite(product) ? 40 : 0
         let semanticBoost = isSemanticFallback(product) ? 14 : 0
         let ingredientBoost = ingredientIntent ? ingredientSemanticScore(for: product, query: query) : 0
-        return (termMatches * 20) + (product.dataCompletenessScore * 8) + localUsageBoost + semanticBoost + ingredientBoost
+        return (termMatches * 20) + (product.dataCompletenessScore * 8) + localUsageBoost + favoriteBoost + semanticBoost + ingredientBoost
     }
 
     private func isFuzzyTokenMatch(query: String, candidate: String) -> Bool {
@@ -759,6 +888,8 @@ struct MealBuilderView: View {
         for component in existingMeal.components {
             servingsByProduct[component.product.id] = component.servings
             selectedProductCache[component.product.id] = component.product
+            servingInputByProduct[component.product.id] = formatServing(component.servings)
+            servingInputErrorByProduct[component.product.id] = nil
         }
         rebuildKnownProducts()
     }

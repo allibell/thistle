@@ -26,9 +26,10 @@ actor LocalCatalogSearchIndex {
         let sql = """
         INSERT OR REPLACE INTO indexed_products (
             id, source, name, brand, barcode, barcode_digits, stores_json, serving_description,
-            ingredients_json, calories, protein, carbs, fat, fiber, image_url, user_edited_at,
-            last_updated_at, canonical_key
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            ingredients_json, calories, protein, carbs, fat, fiber, sugars, added_sugars,
+            saturated_fat, trans_fat, cholesterol_mg, sodium_mg, potassium_mg, calcium_mg,
+            iron_mg, vitamin_d_mcg, vitamin_c_mg, image_url, user_edited_at, last_updated_at, canonical_key
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
 
         let ftsDeleteSQL = "DELETE FROM indexed_products_fts WHERE id = ?;"
@@ -70,10 +71,21 @@ actor LocalCatalogSearchIndex {
             sqlite3_bind_double(upsertStatement, 12, product.nutrition.carbs)
             sqlite3_bind_double(upsertStatement, 13, product.nutrition.fat)
             sqlite3_bind_double(upsertStatement, 14, product.nutrition.fiber)
-            bindText(product.imageURL?.absoluteString ?? "", to: 15, in: upsertStatement)
-            bindText(product.userEditedAt.map(isoFormatter.string(from:)) ?? "", to: 16, in: upsertStatement)
-            bindText(isoFormatter.string(from: product.lastUpdatedAt), to: 17, in: upsertStatement)
-            bindText(product.canonicalLookupKey, to: 18, in: upsertStatement)
+            sqlite3_bind_double(upsertStatement, 15, product.nutrition.sugars)
+            sqlite3_bind_double(upsertStatement, 16, product.nutrition.addedSugars)
+            sqlite3_bind_double(upsertStatement, 17, product.nutrition.saturatedFat)
+            sqlite3_bind_double(upsertStatement, 18, product.nutrition.transFat)
+            sqlite3_bind_double(upsertStatement, 19, product.nutrition.cholesterolMg)
+            sqlite3_bind_double(upsertStatement, 20, product.nutrition.sodiumMg)
+            sqlite3_bind_double(upsertStatement, 21, product.nutrition.potassiumMg)
+            sqlite3_bind_double(upsertStatement, 22, product.nutrition.calciumMg)
+            sqlite3_bind_double(upsertStatement, 23, product.nutrition.ironMg)
+            sqlite3_bind_double(upsertStatement, 24, product.nutrition.vitaminDMcg)
+            sqlite3_bind_double(upsertStatement, 25, product.nutrition.vitaminCMg)
+            bindText(product.imageURL?.absoluteString ?? "", to: 26, in: upsertStatement)
+            bindText(product.userEditedAt.map(isoFormatter.string(from:)) ?? "", to: 27, in: upsertStatement)
+            bindText(isoFormatter.string(from: product.lastUpdatedAt), to: 28, in: upsertStatement)
+            bindText(product.canonicalLookupKey, to: 29, in: upsertStatement)
 
             if sqlite3_step(upsertStatement) != SQLITE_DONE { continue }
 
@@ -102,8 +114,9 @@ actor LocalCatalogSearchIndex {
 
         let sql = """
         SELECT p.id, p.source, p.name, p.brand, p.barcode, p.stores_json, p.serving_description,
-               p.ingredients_json, p.calories, p.protein, p.carbs, p.fat, p.fiber, p.image_url,
-               p.user_edited_at, p.last_updated_at
+               p.ingredients_json, p.calories, p.protein, p.carbs, p.fat, p.fiber, p.sugars,
+               p.added_sugars, p.saturated_fat, p.trans_fat, p.cholesterol_mg, p.sodium_mg, p.potassium_mg,
+               p.calcium_mg, p.iron_mg, p.vitamin_d_mcg, p.vitamin_c_mg, p.image_url, p.user_edited_at, p.last_updated_at
         FROM indexed_products_fts f
         JOIN indexed_products p ON p.id = f.id
         WHERE indexed_products_fts MATCH ?
@@ -135,8 +148,9 @@ actor LocalCatalogSearchIndex {
 
         let sql = """
         SELECT id, source, name, brand, barcode, stores_json, serving_description,
-               ingredients_json, calories, protein, carbs, fat, fiber, image_url,
-               user_edited_at, last_updated_at
+               ingredients_json, calories, protein, carbs, fat, fiber, sugars,
+               added_sugars, saturated_fat, trans_fat, cholesterol_mg, sodium_mg, potassium_mg,
+               calcium_mg, iron_mg, vitamin_d_mcg, vitamin_c_mg, image_url, user_edited_at, last_updated_at
         FROM indexed_products
         WHERE barcode_digits = ?
         ORDER BY last_updated_at DESC
@@ -190,6 +204,17 @@ actor LocalCatalogSearchIndex {
                 carbs REAL NOT NULL,
                 fat REAL NOT NULL,
                 fiber REAL NOT NULL,
+                sugars REAL NOT NULL DEFAULT 0,
+                added_sugars REAL NOT NULL DEFAULT 0,
+                saturated_fat REAL NOT NULL DEFAULT 0,
+                trans_fat REAL NOT NULL DEFAULT 0,
+                cholesterol_mg REAL NOT NULL DEFAULT 0,
+                sodium_mg REAL NOT NULL DEFAULT 0,
+                potassium_mg REAL NOT NULL DEFAULT 0,
+                calcium_mg REAL NOT NULL DEFAULT 0,
+                iron_mg REAL NOT NULL DEFAULT 0,
+                vitamin_d_mcg REAL NOT NULL DEFAULT 0,
+                vitamin_c_mg REAL NOT NULL DEFAULT 0,
                 image_url TEXT NOT NULL,
                 user_edited_at TEXT NOT NULL,
                 last_updated_at TEXT NOT NULL,
@@ -211,6 +236,20 @@ actor LocalCatalogSearchIndex {
             );
             """)
             execute(db: db, sql: "PRAGMA user_version = 1;")
+        }
+        if userVersion < 2 {
+            addColumnIfMissing(db: db, table: "indexed_products", column: "sugars", definition: "REAL NOT NULL DEFAULT 0")
+            addColumnIfMissing(db: db, table: "indexed_products", column: "added_sugars", definition: "REAL NOT NULL DEFAULT 0")
+            addColumnIfMissing(db: db, table: "indexed_products", column: "saturated_fat", definition: "REAL NOT NULL DEFAULT 0")
+            addColumnIfMissing(db: db, table: "indexed_products", column: "trans_fat", definition: "REAL NOT NULL DEFAULT 0")
+            addColumnIfMissing(db: db, table: "indexed_products", column: "cholesterol_mg", definition: "REAL NOT NULL DEFAULT 0")
+            addColumnIfMissing(db: db, table: "indexed_products", column: "sodium_mg", definition: "REAL NOT NULL DEFAULT 0")
+            addColumnIfMissing(db: db, table: "indexed_products", column: "potassium_mg", definition: "REAL NOT NULL DEFAULT 0")
+            addColumnIfMissing(db: db, table: "indexed_products", column: "calcium_mg", definition: "REAL NOT NULL DEFAULT 0")
+            addColumnIfMissing(db: db, table: "indexed_products", column: "iron_mg", definition: "REAL NOT NULL DEFAULT 0")
+            addColumnIfMissing(db: db, table: "indexed_products", column: "vitamin_d_mcg", definition: "REAL NOT NULL DEFAULT 0")
+            addColumnIfMissing(db: db, table: "indexed_products", column: "vitamin_c_mg", definition: "REAL NOT NULL DEFAULT 0")
+            execute(db: db, sql: "PRAGMA user_version = 2;")
         }
     }
 
@@ -235,6 +274,31 @@ actor LocalCatalogSearchIndex {
             return Int(sqlite3_column_int(statement, 0))
         }
         return 0
+    }
+
+    private static func addColumnIfMissing(
+        db: OpaquePointer?,
+        table: String,
+        column: String,
+        definition: String
+    ) {
+        guard let db else { return }
+        guard !tableHasColumn(db: db, table: table, column: column) else { return }
+        execute(db: db, sql: "ALTER TABLE \(table) ADD COLUMN \(column) \(definition);")
+    }
+
+    private static func tableHasColumn(db: OpaquePointer, table: String, column: String) -> Bool {
+        var statement: OpaquePointer?
+        defer { sqlite3_finalize(statement) }
+        let sql = "PRAGMA table_info(\(table));"
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return false }
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let cString = sqlite3_column_text(statement, 1) else { continue }
+            if String(cString: cString) == column {
+                return true
+            }
+        }
+        return false
     }
 
     private func bindText(_ value: String, to index: Int32, in statement: OpaquePointer?) {
@@ -272,9 +336,20 @@ actor LocalCatalogSearchIndex {
         let carbs = sqlite3_column_double(statement, 10)
         let fat = sqlite3_column_double(statement, 11)
         let fiber = sqlite3_column_double(statement, 12)
-        let imageURL = URL(string: columnText(at: 13, in: statement).trimmingCharacters(in: .whitespacesAndNewlines))
-        let userEditedAt = isoFormatter.date(from: columnText(at: 14, in: statement))
-        let lastUpdatedAt = isoFormatter.date(from: columnText(at: 15, in: statement)) ?? .now
+        let sugars = sqlite3_column_double(statement, 13)
+        let addedSugars = sqlite3_column_double(statement, 14)
+        let saturatedFat = sqlite3_column_double(statement, 15)
+        let transFat = sqlite3_column_double(statement, 16)
+        let cholesterolMg = sqlite3_column_double(statement, 17)
+        let sodiumMg = sqlite3_column_double(statement, 18)
+        let potassiumMg = sqlite3_column_double(statement, 19)
+        let calciumMg = sqlite3_column_double(statement, 20)
+        let ironMg = sqlite3_column_double(statement, 21)
+        let vitaminDMcg = sqlite3_column_double(statement, 22)
+        let vitaminCMg = sqlite3_column_double(statement, 23)
+        let imageURL = URL(string: columnText(at: 24, in: statement).trimmingCharacters(in: .whitespacesAndNewlines))
+        let userEditedAt = isoFormatter.date(from: columnText(at: 25, in: statement))
+        let lastUpdatedAt = isoFormatter.date(from: columnText(at: 26, in: statement)) ?? .now
         let id = columnText(at: 0, in: statement)
 
         return Product(
@@ -286,7 +361,24 @@ actor LocalCatalogSearchIndex {
             stores: stores,
             servingDescription: serving,
             ingredients: ingredients,
-            nutrition: NutritionFacts(calories: calories, protein: protein, carbs: carbs, fat: fat, fiber: fiber),
+            nutrition: NutritionFacts(
+                calories: calories,
+                protein: protein,
+                carbs: carbs,
+                fat: fat,
+                fiber: fiber,
+                sugars: sugars,
+                addedSugars: addedSugars,
+                saturatedFat: saturatedFat,
+                transFat: transFat,
+                cholesterolMg: cholesterolMg,
+                sodiumMg: sodiumMg,
+                potassiumMg: potassiumMg,
+                calciumMg: calciumMg,
+                ironMg: ironMg,
+                vitaminDMcg: vitaminDMcg,
+                vitaminCMg: vitaminCMg
+            ),
             imageURL: imageURL,
             userEditedAt: userEditedAt,
             lastUpdatedAt: lastUpdatedAt

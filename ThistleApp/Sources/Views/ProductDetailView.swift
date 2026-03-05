@@ -13,6 +13,7 @@ struct ProductDetailView: View {
     @State private var preferredServingUnit: ServingUnitPreference = .native
     @State private var showingManualEditor = false
     @State private var showingAddToMealSheet = false
+    @State private var showingMoreNutritionFacts = false
 
     var body: some View {
         let currentProduct = store.resolvedProduct(for: product)
@@ -69,6 +70,7 @@ struct ProductDetailView: View {
                     storesSection(for: currentProduct)
 
                     macrosSection(for: currentProduct)
+                    moreNutritionFactsSection(for: currentProduct)
                 }
                 .padding()
                 .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
@@ -396,6 +398,57 @@ struct ProductDetailView: View {
                     Task { await store.enrich(product: product, scope: .macros) }
                 }
             }
+    }
+
+    private func moreNutritionFactsSection(for product: Product) -> some View {
+        let nutrition = product.nutrition * servings
+        let facts = nutrition.additionalNutritionFacts
+
+        return VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showingMoreNutritionFacts.toggle()
+                }
+            } label: {
+                HStack {
+                    Text("More nutrition facts")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Image(systemName: showingMoreNutritionFacts ? "chevron.up" : "chevron.down")
+                        .font(.caption.weight(.semibold))
+                }
+            }
+            .buttonStyle(.plain)
+
+            if showingMoreNutritionFacts {
+                if facts.isEmpty {
+                    Text("No additional nutrition facts available yet for this item.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(facts) { fact in
+                        HStack {
+                            Text(fact.label)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(formattedNutritionFact(fact))
+                                .font(.caption.weight(.semibold))
+                                .monospacedDigit()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func formattedNutritionFact(_ fact: NutritionDetailFact) -> String {
+        let value = fact.value.formatted(
+            .number
+                .precision(.fractionLength(0...1))
+                .rounded(rule: .toNearestOrEven, increment: 0.1)
+        )
+        return "\(value) \(fact.unit)"
     }
 
     private var debugSection: some View {

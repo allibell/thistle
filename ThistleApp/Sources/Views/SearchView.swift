@@ -7,6 +7,8 @@ struct SearchView: View {
     @EnvironmentObject private var store: AppStore
     @State private var showingAddProductSheet = false
     @State private var showingManualProductSheet = false
+    @State private var showingFavoritesSheet = false
+    @State private var showingRecentHistorySheet = false
     @State private var searchResultLimit = 20
     @State private var recentHistoryLimit = 4
     @State private var favoritesLimit = 4
@@ -98,6 +100,12 @@ struct SearchView: View {
                 defaultQuery: store.query,
                 allowLinkMode: false
             )
+        }
+        .sheet(isPresented: $showingFavoritesSheet) {
+            ProductCollectionSheet(title: "Favorites", products: store.favoriteProducts)
+        }
+        .sheet(isPresented: $showingRecentHistorySheet) {
+            ProductCollectionSheet(title: "Recent History", products: store.recentHistoryProducts)
         }
     }
 
@@ -256,6 +264,9 @@ struct SearchView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Recent History")
                 .font(.headline)
+                .onLongPressGesture(minimumDuration: 0.35) {
+                    showingRecentHistorySheet = true
+                }
 
             ForEach(store.recentHistoryProducts.prefix(recentHistoryLimit)) { product in
                 productSearchCard(for: product)
@@ -274,6 +285,9 @@ struct SearchView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Favorites")
                 .font(.headline)
+                .onLongPressGesture(minimumDuration: 0.35) {
+                    showingFavoritesSheet = true
+                }
 
             ForEach(store.favoriteProducts.prefix(favoritesLimit)) { product in
                 productSearchCard(for: product)
@@ -293,7 +307,11 @@ struct SearchView: View {
             NavigationLink {
                 ProductDetailView(product: product)
             } label: {
-                ProductCard(product: product, analysis: store.analysis(for: product))
+                ProductCard(
+                    product: product,
+                    analysis: store.analysis(for: product),
+                    isFavorite: store.isFavorite(product)
+                )
             }
             .buttonStyle(.plain)
         }
@@ -412,6 +430,71 @@ struct SearchView: View {
         return nil
     }
 #endif
+}
+
+private struct ProductCollectionSheet: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+    let products: [Product]
+    @State private var filterText = ""
+
+    private var filteredProducts: [Product] {
+        let trimmed = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return products }
+        let terms = normalizedTerms(from: trimmed)
+        guard !terms.isEmpty else { return products }
+        return products.filter { product in
+            let haystack = "\(product.name) \(product.brand) \(product.ingredients.joined(separator: " ")) \(product.stores.joined(separator: " "))".lowercased()
+            return terms.allSatisfy(haystack.contains)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if filteredProducts.isEmpty {
+                        Text("No matches found.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 8)
+                    } else {
+                        ForEach(filteredProducts) { product in
+                            NavigationLink {
+                                ProductDetailView(product: product)
+                            } label: {
+                                ProductCard(
+                                    product: product,
+                                    analysis: store.analysis(for: product),
+                                    isFavorite: store.isFavorite(product)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding()
+            }
+            .background(ThistleTheme.canvas.ignoresSafeArea())
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $filterText, prompt: "Search \(title.lowercased())")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func normalizedTerms(from text: String) -> [String] {
+        text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count >= 2 }
+    }
 }
 
 struct AddProductToMealSheet: View {

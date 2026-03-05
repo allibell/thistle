@@ -5,6 +5,7 @@ struct ScanView: View {
     @EnvironmentObject private var store: AppStore
     @State private var scannedCode: String?
     @State private var lookupTask: Task<Void, Never>?
+    @FocusState private var manualBarcodeFocused: Bool
 
     var body: some View {
         ScrollView {
@@ -28,7 +29,11 @@ struct ScanView: View {
                     NavigationLink {
                         ProductDetailView(product: resolvedProduct)
                     } label: {
-                        ProductCard(product: resolvedProduct, analysis: store.analysis(for: resolvedProduct))
+                        ProductCard(
+                            product: resolvedProduct,
+                            analysis: store.analysis(for: resolvedProduct),
+                            isFavorite: store.isFavorite(resolvedProduct)
+                        )
                     }
                     .buttonStyle(.plain)
 
@@ -46,8 +51,20 @@ struct ScanView: View {
             }
             .padding()
         }
+        .scrollDismissesKeyboard(.immediately)
+        .onTapGesture {
+            manualBarcodeFocused = false
+        }
         .background(ThistleTheme.canvas.ignoresSafeArea())
         .thistleNavigationTitle("Scan")
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    manualBarcodeFocused = false
+                }
+            }
+        }
         .refreshable {
             resetForFreshScan(clearManualBarcode: true)
         }
@@ -68,18 +85,23 @@ struct ScanView: View {
             }
         }
         .onChange(of: store.selectedTab) { _, newValue in
-            guard newValue == .scan else { return }
-            resetForFreshScan(clearManualBarcode: false)
+            if newValue == .scan {
+                resetForFreshScan(clearManualBarcode: false)
+            } else {
+                manualBarcodeFocused = false
+            }
         }
         .onDisappear {
             lookupTask?.cancel()
             lookupTask = nil
+            manualBarcodeFocused = false
         }
     }
 
     private func resetForFreshScan(clearManualBarcode: Bool) {
         lookupTask?.cancel()
         lookupTask = nil
+        manualBarcodeFocused = false
         scannedCode = nil
         store.resetBarcodeLookupState(clearManualBarcode: clearManualBarcode)
     }
@@ -107,7 +129,9 @@ struct ScanView: View {
             TextField("Enter UPC / EAN", text: $store.manualBarcode)
                 .textFieldStyle(.roundedBorder)
                 .keyboardType(.numberPad)
+                .focused($manualBarcodeFocused)
             Button("Lookup Barcode") {
+                manualBarcodeFocused = false
                 Task { await store.lookupBarcode(store.manualBarcode) }
             }
             .buttonStyle(.borderedProminent)
@@ -120,7 +144,11 @@ struct ScanView: View {
     @ViewBuilder
     private func lookupResult(for code: String) -> some View {
         if let product = store.productForBarcode(code) {
-            ProductCard(product: product, analysis: store.analysis(for: product))
+            ProductCard(
+                product: product,
+                analysis: store.analysis(for: product),
+                isFavorite: store.isFavorite(product)
+            )
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 Text(store.barcodeLookupError ?? "No cached match for \(code)")

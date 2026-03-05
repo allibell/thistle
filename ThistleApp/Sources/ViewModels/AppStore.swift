@@ -1,5 +1,8 @@
 import Combine
 import Foundation
+#if canImport(NaturalLanguage)
+import NaturalLanguage
+#endif
 
 enum AppTab: Hashable {
     case search
@@ -24,6 +27,7 @@ final class AppStore: ObservableObject {
     @Published var cachedProducts: [Product] = [] {
         didSet {
             rebuildLocalCatalogSnapshot()
+            scheduleLocalIndexSync()
             clearAnalysisCache()
         }
     }
@@ -52,6 +56,8 @@ final class AppStore: ObservableObject {
     @Published private(set) var activeSearchQuery = ""
     @Published var manualBarcode = ""
     @Published var remoteSearchResults: [Product] = []
+    @Published private(set) var localIndexedResults: [Product] = []
+    @Published private(set) var semanticRankingScores: [String: Int] = [:]
     @Published var deepSearchResult: Product?
     @Published var searchError: String?
     @Published var isSearching = false
@@ -69,6 +75,8 @@ final class AppStore: ObservableObject {
     private let analyzer = IngredientAnalyzer()
     private let catalogService: ProductCatalogServing
     private let deepSearchService: DeepSearchServing
+    private let localSearchIndex = LocalCatalogSearchIndex.shared
+    private let semanticRanker = SemanticSearchRanker()
     private let persistence: AppPersistence
     private let catalogCacheTTL: TimeInterval = 60 * 60 * 24 * 7
     private let deepSearchCacheTTL: TimeInterval = 60 * 60 * 24
@@ -81,9 +89,11 @@ final class AppStore: ObservableObject {
     private var searchCache: [String: CachedProductList] = [:]
     private var barcodeCache: [String: CachedProductValue] = [:]
     private var deepSearchCache: [String: CachedProductValue] = [:]
-    private var didStartFiberBackfill = false
+    private var didStartNutritionBackfill = false
     private var analysisCache: [String: ProductAnalysis] = [:]
     private var recentLoggedProductIDs: Set<String> = []
+    private var localIndexSyncTask: Task<Void, Never>?
+    private var semanticRankingTask: Task<Void, Never>?
 
     init(
         catalogService: ProductCatalogServing = ProductCatalogService(),
@@ -111,13 +121,11 @@ final class AppStore: ObservableObject {
         pruneExpiredCaches()
         trimCachedProductsIfNeeded()
         rebuildLocalCatalogSnapshot()
+        scheduleLocalIndexSync()
         persistState()
 
         setupPersistence()
-        startFiberBackfillIfNeeded()
-        Task { [weak self] in
-            await self?.runDueFavoriteImportJobs()
-        }
+        startNutritionBackfillIfNeeded()
     }
 
     var localCatalog: [Product] {
@@ -141,7 +149,7 @@ final class AppStore: ObservableObject {
 
     var localProductResults: [Product] {
         guard !activeSearchQuery.isEmpty else { return [] }
-        let candidates = localCatalog.filter(matchesSearchQuery)
+        let candidates = localIndexedResults.isEmpty ? localCatalog : localIndexedResults
         return rankedProducts(
             candidates.filter(matchesFilters),
             limit: maxSearchResults
@@ -273,10 +281,19 @@ final class AppStore: ObservableObject {
         searchError = nil
         deepSearchResult = nil
         remoteSearchResults = []
+        localIndexedResults = []
+        semanticRankingTask?.cancel()
+        semanticRankingScores = [:]
 
         guard !trimmed.isEmpty else {
             return
         }
+
+        let localCandidates = await localSearchIndex.searchProducts(matching: trimmed, limit: maxSearchResults)
+        let normalizedLocalCandidates = deduplicatedProductsByID(localCandidates.map(withInferredStores))
+        localIndexedResults = normalizedLocalCandidates
+        scheduleSemanticRanking(for: trimmed, candidates: normalizedLocalCandidates)
+        mergeIntoCache(Array(normalizedLocalCandidates.prefix(20)))
 
         isSearching = true
         defer { isSearching = false }
@@ -286,8 +303,9 @@ final class AppStore: ObservableObject {
             if let cached = searchCache[cacheKey], isFresh(cached.cachedAt, ttl: catalogCacheTTL) {
                 let normalizedCachedProducts = cached.products.map(withInferredStores)
                 remoteSearchResults = normalizedCachedProducts
+                scheduleSemanticRanking(for: trimmed, candidates: normalizedLocalCandidates + normalizedCachedProducts)
                 mergeIntoCache(Array(normalizedCachedProducts.prefix(24)))
-                if cached.products.isEmpty, localProductResults.isEmpty, matchingMeals.isEmpty {
+                if cached.products.isEmpty, localIndexedResults.isEmpty, matchingMeals.isEmpty {
                     searchError = "No matching foods found in your local library or the online catalog."
                 }
                 return
@@ -297,6 +315,7 @@ final class AppStore: ObservableObject {
                 // Show stale results immediately, then refresh from network.
                 let normalizedStaleProducts = stale.products.map(withInferredStores)
                 remoteSearchResults = normalizedStaleProducts
+                scheduleSemanticRanking(for: trimmed, candidates: normalizedLocalCandidates + normalizedStaleProducts)
                 mergeIntoCache(Array(normalizedStaleProducts.prefix(24)))
             }
 
@@ -310,8 +329,9 @@ final class AppStore: ObservableObject {
             }
 
             remoteSearchResults = normalizedProducts
+            scheduleSemanticRanking(for: trimmed, candidates: normalizedLocalCandidates + normalizedProducts)
             mergeIntoCache(Array(normalizedProducts.prefix(24)))
-            if products.isEmpty, localProductResults.isEmpty, matchingMeals.isEmpty {
+            if products.isEmpty, localIndexedResults.isEmpty, matchingMeals.isEmpty {
                 searchError = "No matching foods found in your local library or the online catalog."
             }
         } catch {
@@ -398,6 +418,9 @@ final class AppStore: ObservableObject {
         }
         query = ""
         activeSearchQuery = ""
+        localIndexedResults = []
+        semanticRankingTask?.cancel()
+        semanticRankingScores = [:]
         remoteSearchResults = []
         deepSearchResult = nil
         searchError = nil
@@ -1221,9 +1244,18 @@ final class AppStore: ObservableObject {
     }
 
     private func combinedRankingScore(for product: Product) -> Int {
-        let favoriteBoost = isFavorite(product) ? 80 : 0
-        let recentBoost = recentLoggedProductIDs.contains(product.id) ? 25 : 0
-        let usageBoost = usageCounts[product.id, default: 0] * 5
+        let isActiveSearch = !activeSearchQuery.isEmpty
+        let favoriteBoost = isActiveSearch ? 0 : (isFavorite(product) ? 80 : 0)
+        let recentBoost = isActiveSearch ? 0 : (recentLoggedProductIDs.contains(product.id) ? 25 : 0)
+        let usageBoost = isActiveSearch ? 0 : (usageCounts[product.id, default: 0] * 5)
+        let postRankPersonalizationBoost: Int = {
+            guard isActiveSearch else { return 0 }
+            var boost = 0
+            if isFavorite(product) { boost += 4 }
+            if recentLoggedProductIDs.contains(product.id) { boost += 3 }
+            boost += min(3, usageCounts[product.id, default: 0])
+            return boost
+        }()
         let completenessBoost = productQualityScore(for: product)
         let ratingBoost: Int
         switch analysis(for: product).rating {
@@ -1313,8 +1345,9 @@ final class AppStore: ObservableObject {
         case .deepSearch: sourceBoost = 3
         case .manual: sourceBoost = 5
         }
+        let semanticBoost = isActiveSearch ? semanticRankingScores[product.id, default: 0] : 0
         let completenessPenalty = product.isLowConfidenceCatalogEntry ? -30 : 0
-        return favoriteBoost + recentBoost + usageBoost + completenessBoost + ratingBoost + queryBoost + sourceBoost + completenessPenalty
+        return favoriteBoost + recentBoost + usageBoost + completenessBoost + ratingBoost + queryBoost + sourceBoost + semanticBoost + postRankPersonalizationBoost + completenessPenalty
     }
 
     private func isLikelyCompositeFoodName(_ normalizedName: String) -> Bool {
@@ -1868,17 +1901,47 @@ final class AppStore: ObservableObject {
         deepSearchDebugLog.append("[\(timestamp)] \(message)")
     }
 
-    private func startFiberBackfillIfNeeded() {
-        guard !didStartFiberBackfill else { return }
-        didStartFiberBackfill = true
+    private func startNutritionBackfillIfNeeded() {
+        guard !didStartNutritionBackfill else { return }
+        didStartNutritionBackfill = true
         Task { [weak self] in
-            await self?.backfillMissingFiberNutrition()
+            await self?.backfillMissingNutritionFacts()
         }
     }
 
     private func rebuildLocalCatalogSnapshot() {
         let normalized = (SampleData.products + cachedProducts).map(withInferredStores)
         localCatalogSnapshot = deduplicatedProductsByID(bestProductsByCanonicalKey(normalized))
+    }
+
+    private func scheduleLocalIndexSync() {
+        localIndexSyncTask?.cancel()
+        let products = localCatalogSnapshot
+        localIndexSyncTask = Task(priority: .utility) { [localSearchIndex] in
+            await localSearchIndex.upsert(products: products)
+        }
+    }
+
+    private func scheduleSemanticRanking(for query: String, candidates: [Product]) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            semanticRankingTask?.cancel()
+            semanticRankingScores = [:]
+            return
+        }
+
+        let deduped = deduplicatedProductsByID(candidates)
+        semanticRankingTask?.cancel()
+        semanticRankingTask = Task(priority: .utility) { [semanticRanker] in
+            let scores = await semanticRanker.score(products: deduped, query: trimmed, limit: 48)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard self.activeSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed else {
+                    return
+                }
+                self.semanticRankingScores = scores
+            }
+        }
     }
 
     private func rebuildRecentLoggedProductIDs() {
@@ -1910,14 +1973,13 @@ final class AppStore: ObservableObject {
         cachedProducts = Array(ordered.prefix(maxCachedProducts))
     }
 
-    private func backfillMissingFiberNutrition() async {
+    private func backfillMissingNutritionFacts() async {
         let candidates = deduplicatedProductsByID(bestProductsByCanonicalKey(cachedProducts))
             .filter { product in
-                product.nutrition.fiber <= 0.01
-                    && (product.hasMeaningfulNutrition || !product.barcode.isEmpty)
-                    && (product.source == .openFoodFacts || product.source == .upcItemDB || product.source == .deepSearch || product.source == .manual)
+                product.nutrition.needsNutritionBackfill
+                    && (product.source == .openFoodFacts || product.source == .upcItemDB || product.source == .deepSearch || product.source == .manual || product.source == .usda)
             }
-            .prefix(30)
+            .prefix(120)
 
         guard !candidates.isEmpty else { return }
 
@@ -1925,9 +1987,9 @@ final class AppStore: ObservableObject {
         for product in candidates {
             if Task.isCancelled { break }
 
-            if let enriched = await backfilledFiberCandidate(for: product) {
+            if let enriched = await backfilledNutritionCandidate(for: product) {
                 var merged = product
-                merged.nutrition.fiber = enriched.nutrition.fiber
+                merged.nutrition = merged.nutrition.fillingMissing(from: enriched.nutrition)
                 merged.lastUpdatedAt = .now
                 updates.append(merged)
             }
@@ -1944,13 +2006,25 @@ final class AppStore: ObservableObject {
            let replacement = updates.first(where: { isSameProductIdentity(lhs: barcodeLookupResult, rhs: $0) }) {
             self.barcodeLookupResult = replacement
         }
+
+        let mealUpdatesByID = Dictionary(uniqueKeysWithValues: updates.map { ($0.id, $0) })
+        if !mealUpdatesByID.isEmpty {
+            for mealIndex in meals.indices {
+                for componentIndex in meals[mealIndex].components.indices {
+                    let component = meals[mealIndex].components[componentIndex]
+                    if let replacement = mealUpdatesByID[component.product.id] {
+                        meals[mealIndex].components[componentIndex].product = replacement
+                    }
+                }
+            }
+        }
     }
 
-    private func backfilledFiberCandidate(for product: Product) async -> Product? {
+    private func backfilledNutritionCandidate(for product: Product) async -> Product? {
         let barcode = BarcodeNormalizer.digitsOnly(from: product.barcode)
         if !barcode.isEmpty,
            let fetched = try? await catalogService.product(forBarcode: barcode),
-           fetched.nutrition.fiber > 0.01 {
+           nutritionBackfillScore(existing: product.nutrition, candidate: fetched.nutrition) > 0 {
             return withInferredStores(fetched)
         }
 
@@ -1960,11 +2034,30 @@ final class AppStore: ObservableObject {
 
         guard let matches = try? await catalogService.searchProducts(matching: query) else { return nil }
         let best = matches.first { candidate in
-            candidate.nutrition.fiber > 0.01
+            nutritionBackfillScore(existing: product.nutrition, candidate: candidate.nutrition) > 0
                 && (candidate.canonicalLookupKey == product.canonicalLookupKey
                     || normalizedComparableText(candidate.name) == normalizedComparableText(product.name))
         }
         return best.map(withInferredStores)
+    }
+
+    private func nutritionBackfillScore(existing: NutritionFacts, candidate: NutritionFacts) -> Int {
+        var score = 0
+
+        if existing.fiber <= 0.0001, candidate.fiber > 0.0001 { score += 2 }
+        if existing.sugars <= 0.0001, candidate.sugars > 0.0001 { score += 1 }
+        if existing.addedSugars <= 0.0001, candidate.addedSugars > 0.0001 { score += 1 }
+        if existing.saturatedFat <= 0.0001, candidate.saturatedFat > 0.0001 { score += 1 }
+        if existing.transFat <= 0.0001, candidate.transFat > 0.0001 { score += 1 }
+        if existing.cholesterolMg <= 0.0001, candidate.cholesterolMg > 0.0001 { score += 1 }
+        if existing.sodiumMg <= 0.0001, candidate.sodiumMg > 0.0001 { score += 1 }
+        if existing.potassiumMg <= 0.0001, candidate.potassiumMg > 0.0001 { score += 1 }
+        if existing.calciumMg <= 0.0001, candidate.calciumMg > 0.0001 { score += 1 }
+        if existing.ironMg <= 0.0001, candidate.ironMg > 0.0001 { score += 1 }
+        if existing.vitaminDMcg <= 0.0001, candidate.vitaminDMcg > 0.0001 { score += 1 }
+        if existing.vitaminCMg <= 0.0001, candidate.vitaminCMg > 0.0001 { score += 1 }
+
+        return score
     }
 
     private func parseWholeFoodsOrderItems(from payload: String, maxItems: Int) -> [ParsedOrderItem] {
@@ -2247,4 +2340,57 @@ final class AppStore: ObservableObject {
 
 private struct ParsedOrderItem {
     var name: String
+}
+
+private actor SemanticSearchRanker {
+#if canImport(NaturalLanguage)
+    private let embedding: NLEmbedding? = NLEmbedding.sentenceEmbedding(for: .english)
+        ?? NLEmbedding.wordEmbedding(for: .english)
+#endif
+
+    func score(products: [Product], query: String, limit: Int) -> [String: Int] {
+#if canImport(NaturalLanguage)
+        guard let embedding else { return [:] }
+#endif
+        let normalizedQuery = normalizedText(query)
+        guard !normalizedQuery.isEmpty else { return [:] }
+
+        let candidates = products.compactMap { product -> (id: String, distance: Double)? in
+            let signature = productSignature(for: product)
+            guard !signature.isEmpty else { return nil }
+#if canImport(NaturalLanguage)
+            let distance = embedding.distance(between: normalizedQuery, and: signature)
+#else
+            let distance = 1.0
+#endif
+            guard distance.isFinite else { return nil }
+            return (id: product.id, distance: distance)
+        }
+        .sorted { $0.distance < $1.distance }
+
+        let capped = candidates.prefix(max(0, limit))
+        var output: [String: Int] = [:]
+        for (index, candidate) in capped.enumerated() {
+            let rankBoost = max(0, 18 - (index / 2))
+            let distanceBoost = Int(max(0, (0.95 - min(candidate.distance, 0.95)) * 22))
+            output[candidate.id] = rankBoost + distanceBoost
+        }
+        return output
+    }
+
+    private func productSignature(for product: Product) -> String {
+        let ingredients = product.ingredients.prefix(6).joined(separator: " ")
+        let stores = product.stores.prefix(2).joined(separator: " ")
+        return normalizedText("\(product.name) \(product.name) \(product.brand) \(stores) \(ingredients)")
+    }
+
+    private func normalizedText(_ text: String) -> String {
+        text
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .lowercased()
+            .replacingOccurrences(of: "&", with: " and ")
+            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }

@@ -30,15 +30,27 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
         let localCandidates = await localIndex.searchProducts(matching: trimmed, limit: 16)
         var aggregate: [Product] = localCandidates
         let variants = queryVariants(for: trimmed)
-        let maxVariantCount = localCandidates.count >= 8 ? 2 : variants.count
+        let maxVariantCount: Int = {
+            if localCandidates.count >= 10 { return 1 }
+            if localCandidates.count >= 6 { return 2 }
+            return min(3, variants.count)
+        }()
         var encounteredNetworkError = false
+        var consecutiveTimeouts = 0
 
         for variant in variants.prefix(maxVariantCount) {
             let fetched: [Product]
             do {
                 fetched = try await openFoodFacts.searchProducts(matching: variant)
+                consecutiveTimeouts = 0
             } catch {
                 encounteredNetworkError = true
+                if let urlError = error as? URLError, urlError.code == .timedOut {
+                    consecutiveTimeouts += 1
+                    if aggregate.count >= 6 || consecutiveTimeouts >= 2 {
+                        break
+                    }
+                }
                 continue
             }
             if !fetched.isEmpty {
@@ -94,12 +106,10 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
 
         if terms.count >= 2 {
             variants.append(terms.joined(separator: " "))
-            variants.append("\(terms.first ?? "") \(terms.last ?? "")".trimmingCharacters(in: .whitespacesAndNewlines))
         }
 
         if terms.count >= 3 {
             variants.append("\(terms[0]) \(terms[1])")
-            variants.append("\(terms[0]) \(terms[2])")
         }
 
         if normalized.contains("malk"), !normalized.contains("milk") {
@@ -140,7 +150,8 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
             variants.append(semantic.joined(separator: " "))
         }
 
-        return Array(NSOrderedSet(array: variants.compactMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty }).compactMap { $0 as? String })
+        let unique = Array(NSOrderedSet(array: variants.compactMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty }).compactMap { $0 as? String })
+        return Array(unique.prefix(4))
     }
 
     private func deduplicate(_ products: [Product]) -> [Product] {
@@ -315,7 +326,7 @@ private struct OpenFoodFactsClient: Sendable {
     private let session: URLSession
     private let baseURL = URL(string: "https://world.openfoodfacts.org")!
 
-    init(session: URLSession = .shared) {
+    init(session: URLSession = OpenFoodFactsClient.makeSession()) {
         self.session = session
     }
 
@@ -348,8 +359,16 @@ private struct OpenFoodFactsClient: Sendable {
     private func request(for url: URL?) -> URLRequest {
         var request = URLRequest(url: url ?? baseURL)
         request.setValue("Thistle/0.1 (personal nutrition app; contact: local-dev)", forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 20
+        request.timeoutInterval = 8
         return request
+    }
+
+    private static func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 8
+        configuration.timeoutIntervalForResource = 12
+        configuration.waitsForConnectivity = false
+        return URLSession(configuration: configuration)
     }
 
     private var fields: String {
@@ -434,6 +453,28 @@ private struct OpenFoodFactsNutriments: Decodable {
     var fat100g: Double?
     var fiberServing: Double?
     var fiber100g: Double?
+    var sugarsServing: Double?
+    var sugars100g: Double?
+    var addedSugarsServing: Double?
+    var addedSugars100g: Double?
+    var saturatedFatServing: Double?
+    var saturatedFat100g: Double?
+    var transFatServing: Double?
+    var transFat100g: Double?
+    var cholesterolServing: Double?
+    var cholesterol100g: Double?
+    var sodiumServing: Double?
+    var sodium100g: Double?
+    var potassiumServing: Double?
+    var potassium100g: Double?
+    var calciumServing: Double?
+    var calcium100g: Double?
+    var ironServing: Double?
+    var iron100g: Double?
+    var vitaminDServing: Double?
+    var vitaminD100g: Double?
+    var vitaminCServing: Double?
+    var vitaminC100g: Double?
 
     enum CodingKeys: String, CodingKey {
         case caloriesServing = "energy-kcal_serving"
@@ -446,6 +487,28 @@ private struct OpenFoodFactsNutriments: Decodable {
         case fat100g = "fat_100g"
         case fiberServing = "fiber_serving"
         case fiber100g = "fiber_100g"
+        case sugarsServing = "sugars_serving"
+        case sugars100g = "sugars_100g"
+        case addedSugarsServing = "added-sugars_serving"
+        case addedSugars100g = "added-sugars_100g"
+        case saturatedFatServing = "saturated-fat_serving"
+        case saturatedFat100g = "saturated-fat_100g"
+        case transFatServing = "trans-fat_serving"
+        case transFat100g = "trans-fat_100g"
+        case cholesterolServing = "cholesterol_serving"
+        case cholesterol100g = "cholesterol_100g"
+        case sodiumServing = "sodium_serving"
+        case sodium100g = "sodium_100g"
+        case potassiumServing = "potassium_serving"
+        case potassium100g = "potassium_100g"
+        case calciumServing = "calcium_serving"
+        case calcium100g = "calcium_100g"
+        case ironServing = "iron_serving"
+        case iron100g = "iron_100g"
+        case vitaminDServing = "vitamin-d_serving"
+        case vitaminD100g = "vitamin-d_100g"
+        case vitaminCServing = "vitamin-c_serving"
+        case vitaminC100g = "vitamin-c_100g"
     }
 
     var nutritionFacts: NutritionFacts {
@@ -454,8 +517,26 @@ private struct OpenFoodFactsNutriments: Decodable {
             protein: proteinServing ?? protein100g ?? 0,
             carbs: carbsServing ?? carbs100g ?? 0,
             fat: fatServing ?? fat100g ?? 0,
-            fiber: fiberServing ?? fiber100g ?? 0
+            fiber: fiberServing ?? fiber100g ?? 0,
+            sugars: sugarsServing ?? sugars100g ?? 0,
+            addedSugars: addedSugarsServing ?? addedSugars100g ?? 0,
+            saturatedFat: saturatedFatServing ?? saturatedFat100g ?? 0,
+            transFat: transFatServing ?? transFat100g ?? 0,
+            cholesterolMg: normalizedMilligrams(cholesterolServing ?? cholesterol100g),
+            sodiumMg: normalizedMilligrams(sodiumServing ?? sodium100g),
+            potassiumMg: normalizedMilligrams(potassiumServing ?? potassium100g),
+            calciumMg: normalizedMilligrams(calciumServing ?? calcium100g),
+            ironMg: normalizedMilligrams(ironServing ?? iron100g),
+            vitaminDMcg: vitaminDServing ?? vitaminD100g ?? 0,
+            vitaminCMg: normalizedMilligrams(vitaminCServing ?? vitaminC100g)
         )
+    }
+
+    // OFF units vary by nutrient; this keeps obvious gram values from being shown as tiny mg values.
+    private func normalizedMilligrams(_ value: Double?) -> Double {
+        guard let value else { return 0 }
+        if value <= 0 { return 0 }
+        return value <= 10 ? value * 1000 : value
     }
 }
 

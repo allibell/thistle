@@ -84,6 +84,7 @@ struct IngredientsSection: View {
 struct ProductCard: View {
     var product: Product
     var analysis: ProductAnalysis
+    var isFavorite: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -95,6 +96,12 @@ struct ProductCard: View {
                         Text(product.brand)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+                        if isFavorite {
+                            Image(systemName: "star.fill")
+                                .font(.caption)
+                                .foregroundStyle(.yellow)
+                                .accessibilityLabel("Favorited")
+                        }
                         if product.isUserEdited {
                             Text("USER EDITED")
                                 .font(.caption2.weight(.bold))

@@ -69,13 +69,52 @@ struct NutritionFacts: Codable, Hashable {
     var carbs: Double
     var fat: Double
     var fiber: Double
+    var sugars: Double
+    var addedSugars: Double
+    var saturatedFat: Double
+    var transFat: Double
+    var cholesterolMg: Double
+    var sodiumMg: Double
+    var potassiumMg: Double
+    var calciumMg: Double
+    var ironMg: Double
+    var vitaminDMcg: Double
+    var vitaminCMg: Double
 
-    init(calories: Int, protein: Double, carbs: Double, fat: Double, fiber: Double = 0) {
+    init(
+        calories: Int,
+        protein: Double,
+        carbs: Double,
+        fat: Double,
+        fiber: Double = 0,
+        sugars: Double = 0,
+        addedSugars: Double = 0,
+        saturatedFat: Double = 0,
+        transFat: Double = 0,
+        cholesterolMg: Double = 0,
+        sodiumMg: Double = 0,
+        potassiumMg: Double = 0,
+        calciumMg: Double = 0,
+        ironMg: Double = 0,
+        vitaminDMcg: Double = 0,
+        vitaminCMg: Double = 0
+    ) {
         self.calories = calories
         self.protein = protein
         self.carbs = carbs
         self.fat = fat
         self.fiber = fiber
+        self.sugars = sugars
+        self.addedSugars = addedSugars
+        self.saturatedFat = saturatedFat
+        self.transFat = transFat
+        self.cholesterolMg = cholesterolMg
+        self.sodiumMg = sodiumMg
+        self.potassiumMg = potassiumMg
+        self.calciumMg = calciumMg
+        self.ironMg = ironMg
+        self.vitaminDMcg = vitaminDMcg
+        self.vitaminCMg = vitaminCMg
     }
 
     static let zero = NutritionFacts(calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0)
@@ -86,7 +125,18 @@ struct NutritionFacts: Codable, Hashable {
             protein: lhs.protein + rhs.protein,
             carbs: lhs.carbs + rhs.carbs,
             fat: lhs.fat + rhs.fat,
-            fiber: lhs.fiber + rhs.fiber
+            fiber: lhs.fiber + rhs.fiber,
+            sugars: lhs.sugars + rhs.sugars,
+            addedSugars: lhs.addedSugars + rhs.addedSugars,
+            saturatedFat: lhs.saturatedFat + rhs.saturatedFat,
+            transFat: lhs.transFat + rhs.transFat,
+            cholesterolMg: lhs.cholesterolMg + rhs.cholesterolMg,
+            sodiumMg: lhs.sodiumMg + rhs.sodiumMg,
+            potassiumMg: lhs.potassiumMg + rhs.potassiumMg,
+            calciumMg: lhs.calciumMg + rhs.calciumMg,
+            ironMg: lhs.ironMg + rhs.ironMg,
+            vitaminDMcg: lhs.vitaminDMcg + rhs.vitaminDMcg,
+            vitaminCMg: lhs.vitaminCMg + rhs.vitaminCMg
         )
     }
 
@@ -96,8 +146,63 @@ struct NutritionFacts: Codable, Hashable {
             protein: lhs.protein * rhs,
             carbs: lhs.carbs * rhs,
             fat: lhs.fat * rhs,
-            fiber: lhs.fiber * rhs
+            fiber: lhs.fiber * rhs,
+            sugars: lhs.sugars * rhs,
+            addedSugars: lhs.addedSugars * rhs,
+            saturatedFat: lhs.saturatedFat * rhs,
+            transFat: lhs.transFat * rhs,
+            cholesterolMg: lhs.cholesterolMg * rhs,
+            sodiumMg: lhs.sodiumMg * rhs,
+            potassiumMg: lhs.potassiumMg * rhs,
+            calciumMg: lhs.calciumMg * rhs,
+            ironMg: lhs.ironMg * rhs,
+            vitaminDMcg: lhs.vitaminDMcg * rhs,
+            vitaminCMg: lhs.vitaminCMg * rhs
         )
+    }
+
+    func fillingMissing(from candidate: NutritionFacts) -> NutritionFacts {
+        NutritionFacts(
+            calories: calories == 0 && candidate.calories > 0 ? candidate.calories : calories,
+            protein: protein <= 0.0001 && candidate.protein > 0.0001 ? candidate.protein : protein,
+            carbs: carbs <= 0.0001 && candidate.carbs > 0.0001 ? candidate.carbs : carbs,
+            fat: fat <= 0.0001 && candidate.fat > 0.0001 ? candidate.fat : fat,
+            fiber: fiber <= 0.0001 && candidate.fiber > 0.0001 ? candidate.fiber : fiber,
+            sugars: sugars <= 0.0001 && candidate.sugars > 0.0001 ? candidate.sugars : sugars,
+            addedSugars: addedSugars <= 0.0001 && candidate.addedSugars > 0.0001 ? candidate.addedSugars : addedSugars,
+            saturatedFat: saturatedFat <= 0.0001 && candidate.saturatedFat > 0.0001 ? candidate.saturatedFat : saturatedFat,
+            transFat: transFat <= 0.0001 && candidate.transFat > 0.0001 ? candidate.transFat : transFat,
+            cholesterolMg: cholesterolMg <= 0.0001 && candidate.cholesterolMg > 0.0001 ? candidate.cholesterolMg : cholesterolMg,
+            sodiumMg: sodiumMg <= 0.0001 && candidate.sodiumMg > 0.0001 ? candidate.sodiumMg : sodiumMg,
+            potassiumMg: potassiumMg <= 0.0001 && candidate.potassiumMg > 0.0001 ? candidate.potassiumMg : potassiumMg,
+            calciumMg: calciumMg <= 0.0001 && candidate.calciumMg > 0.0001 ? candidate.calciumMg : calciumMg,
+            ironMg: ironMg <= 0.0001 && candidate.ironMg > 0.0001 ? candidate.ironMg : ironMg,
+            vitaminDMcg: vitaminDMcg <= 0.0001 && candidate.vitaminDMcg > 0.0001 ? candidate.vitaminDMcg : vitaminDMcg,
+            vitaminCMg: vitaminCMg <= 0.0001 && candidate.vitaminCMg > 0.0001 ? candidate.vitaminCMg : vitaminCMg
+        )
+    }
+
+    var additionalNutritionFacts: [NutritionDetailFact] {
+        [
+            NutritionDetailFact(id: "sugars", label: "Sugars", value: sugars, unit: "g"),
+            NutritionDetailFact(id: "addedSugars", label: "Added Sugars", value: addedSugars, unit: "g"),
+            NutritionDetailFact(id: "saturatedFat", label: "Saturated Fat", value: saturatedFat, unit: "g"),
+            NutritionDetailFact(id: "transFat", label: "Trans Fat", value: transFat, unit: "g"),
+            NutritionDetailFact(id: "cholesterol", label: "Cholesterol", value: cholesterolMg, unit: "mg"),
+            NutritionDetailFact(id: "sodium", label: "Sodium", value: sodiumMg, unit: "mg"),
+            NutritionDetailFact(id: "potassium", label: "Potassium", value: potassiumMg, unit: "mg"),
+            NutritionDetailFact(id: "calcium", label: "Calcium", value: calciumMg, unit: "mg"),
+            NutritionDetailFact(id: "iron", label: "Iron", value: ironMg, unit: "mg"),
+            NutritionDetailFact(id: "vitaminD", label: "Vitamin D", value: vitaminDMcg, unit: "mcg"),
+            NutritionDetailFact(id: "vitaminC", label: "Vitamin C", value: vitaminCMg, unit: "mg")
+        ]
+        .filter { $0.value > 0.0001 }
+    }
+
+    var needsNutritionBackfill: Bool {
+        let hasPrimary = calories > 0 || protein > 0 || carbs > 0 || fat > 0
+        guard hasPrimary else { return false }
+        return fiber <= 0.0001 || additionalNutritionFacts.isEmpty
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -106,6 +211,17 @@ struct NutritionFacts: Codable, Hashable {
         case carbs
         case fat
         case fiber
+        case sugars
+        case addedSugars
+        case saturatedFat
+        case transFat
+        case cholesterolMg
+        case sodiumMg
+        case potassiumMg
+        case calciumMg
+        case ironMg
+        case vitaminDMcg
+        case vitaminCMg
     }
 
     init(from decoder: Decoder) throws {
@@ -115,7 +231,25 @@ struct NutritionFacts: Codable, Hashable {
         carbs = try container.decodeIfPresent(Double.self, forKey: .carbs) ?? 0
         fat = try container.decodeIfPresent(Double.self, forKey: .fat) ?? 0
         fiber = try container.decodeIfPresent(Double.self, forKey: .fiber) ?? 0
+        sugars = try container.decodeIfPresent(Double.self, forKey: .sugars) ?? 0
+        addedSugars = try container.decodeIfPresent(Double.self, forKey: .addedSugars) ?? 0
+        saturatedFat = try container.decodeIfPresent(Double.self, forKey: .saturatedFat) ?? 0
+        transFat = try container.decodeIfPresent(Double.self, forKey: .transFat) ?? 0
+        cholesterolMg = try container.decodeIfPresent(Double.self, forKey: .cholesterolMg) ?? 0
+        sodiumMg = try container.decodeIfPresent(Double.self, forKey: .sodiumMg) ?? 0
+        potassiumMg = try container.decodeIfPresent(Double.self, forKey: .potassiumMg) ?? 0
+        calciumMg = try container.decodeIfPresent(Double.self, forKey: .calciumMg) ?? 0
+        ironMg = try container.decodeIfPresent(Double.self, forKey: .ironMg) ?? 0
+        vitaminDMcg = try container.decodeIfPresent(Double.self, forKey: .vitaminDMcg) ?? 0
+        vitaminCMg = try container.decodeIfPresent(Double.self, forKey: .vitaminCMg) ?? 0
     }
+}
+
+struct NutritionDetailFact: Identifiable, Hashable {
+    var id: String
+    var label: String
+    var value: Double
+    var unit: String
 }
 
 struct IngredientFlag: Identifiable, Hashable, Codable {
