@@ -175,16 +175,24 @@ struct SearchView: View {
     }
 
     private var submittedFavoriteMatches: [Product] {
-        Array(store.favoriteProducts.filter(matchesActiveQuery).prefix(6))
+        Array(
+            store.favoriteProducts
+                .filter { submittedResultIDs.contains($0.id) }
+                .prefix(6)
+        )
     }
 
     private var submittedRecentMatches: [Product] {
         let favoriteIDs = Set(submittedFavoriteMatches.map(\.id))
         return Array(
             store.recentHistoryProducts
-                .filter { !favoriteIDs.contains($0.id) && matchesActiveQuery($0) }
+                .filter { !favoriteIDs.contains($0.id) && submittedResultIDs.contains($0.id) }
                 .prefix(6)
         )
+    }
+
+    private var submittedResultIDs: Set<String> {
+        Set(store.searchResults.map(\.id))
     }
 
     private var remainingSearchResults: [Product] {
@@ -194,92 +202,6 @@ struct SearchView: View {
 
     private var visibleSearchResults: [Product] {
         Array(remainingSearchResults.prefix(searchResultLimit))
-    }
-
-    private func matchesActiveQuery(_ product: Product) -> Bool {
-        let trimmed = store.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-
-        let queryTerms = parsedQueryTerms(from: trimmed)
-        guard !queryTerms.isEmpty else { return false }
-
-        let haystack = [
-            product.name,
-            product.brand,
-            product.ingredients.joined(separator: " "),
-            product.stores.joined(separator: " "),
-            product.barcode
-        ]
-            .joined(separator: " ")
-            .lowercased()
-
-        let haystackTerms = Set(normalizedTerms(from: haystack))
-        return queryTerms.allSatisfy { term in
-            if haystack.contains(term) { return true }
-            return haystackTerms.contains { candidate in
-                candidate == term
-                    || (term.count >= 4 && candidate.hasPrefix(term))
-                    || isNearTokenMatch(term, candidate)
-            }
-        }
-    }
-
-    private func normalizedTerms(from text: String) -> [String] {
-        text
-            .lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { $0.count >= 2 }
-    }
-
-    private func parsedQueryTerms(from rawQuery: String) -> [String] {
-        let terms = normalizedTerms(from: rawQuery)
-        let normalized = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        var removable: Set<String> = []
-
-        if normalized.contains("whole foods") || normalized.contains("wholefoods") {
-            removable.formUnion(["whole", "foods", "wholefoods", "wfm"])
-        }
-        if normalized.contains("trader joe") || normalized.contains("traderjoes") {
-            removable.formUnion(["trader", "joe", "joes", "traderjoe", "traderjoes"])
-        }
-        if normalized.contains("sprouts") {
-            removable.formUnion(["sprouts"])
-        }
-
-        let required = terms.filter { !removable.contains($0) }
-        return required.isEmpty ? terms : required
-    }
-
-    private func isNearTokenMatch(_ query: String, _ candidate: String) -> Bool {
-        let lengthGap = abs(query.count - candidate.count)
-        if lengthGap > 1 { return false }
-
-        let queryChars = Array(query)
-        let candidateChars = Array(candidate)
-        guard !queryChars.isEmpty, !candidateChars.isEmpty else { return false }
-
-        var mismatches = 0
-        var i = 0
-        var j = 0
-        while i < queryChars.count && j < candidateChars.count {
-            if queryChars[i] == candidateChars[j] {
-                i += 1
-                j += 1
-                continue
-            }
-            mismatches += 1
-            if mismatches > 1 { return false }
-            if queryChars.count > candidateChars.count {
-                i += 1
-            } else if candidateChars.count > queryChars.count {
-                j += 1
-            } else {
-                i += 1
-                j += 1
-            }
-        }
-        mismatches += (queryChars.count - i) + (candidateChars.count - j)
-        return mismatches <= 1
     }
 
     private var searchActions: some View {
