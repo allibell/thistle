@@ -17,12 +17,12 @@ struct MacroSummaryView: View {
     var nutrition: NutritionFacts
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
             macroPill(title: "Cal", value: "\(nutrition.calories)")
             macroPill(title: "P", value: "\(nutrition.protein.formatted(.number.precision(.fractionLength(0))))g")
             macroPill(title: "C", value: "\(nutrition.carbs.formatted(.number.precision(.fractionLength(0))))g")
             macroPill(title: "F", value: "\(nutrition.fat.formatted(.number.precision(.fractionLength(0))))g")
-            macroPill(title: "Fi", value: "\(nutrition.fiber.formatted(.number.precision(.fractionLength(0...1))))g")
+            macroPill(title: "Fi", value: "\(nutrition.fiber.formatted(.number.precision(.fractionLength(0))))g")
         }
     }
 
@@ -30,9 +30,13 @@ struct MacroSummaryView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.caption)
+                .lineLimit(1)
                 .foregroundStyle(.secondary)
             Text(value)
                 .font(.subheadline.weight(.semibold))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)

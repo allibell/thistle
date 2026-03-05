@@ -3,13 +3,17 @@ import Foundation
 import WidgetKit
 #endif
 
-struct AppPersistence {
+final class AppPersistence: @unchecked Sendable {
     private let fileURL: URL
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private let widgetEncoder: JSONEncoder
     private let calendar: Calendar
     private let now: () -> Date
+    private let saveQueue = DispatchQueue(label: "com.thistle.persistence.save", qos: .utility)
+    private var pendingState: PersistedAppState?
+    private var pendingWidgetSnapshot = false
+    private var isFlushingSaveQueue = false
 
     init(
         fileManager: FileManager = .default,
@@ -43,15 +47,36 @@ struct AppPersistence {
         }
     }
 
-    func save(_ state: PersistedAppState) {
-        do {
-            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let data = try encoder.encode(state)
-            try data.write(to: fileURL, options: .atomic)
-            saveWidgetSnapshot(state)
-        } catch {
-            assertionFailure("Failed to save state: \(error.localizedDescription)")
+    func save(_ state: PersistedAppState, includeWidgetSnapshot: Bool = false) {
+        saveQueue.async { [weak self] in
+            guard let self else { return }
+            self.pendingState = state
+            self.pendingWidgetSnapshot = self.pendingWidgetSnapshot || includeWidgetSnapshot
+            self.flushPendingSavesIfNeeded()
         }
+    }
+
+    private func flushPendingSavesIfNeeded() {
+        guard !isFlushingSaveQueue else { return }
+        isFlushingSaveQueue = true
+
+        while let state = pendingState {
+            let shouldSaveWidgetSnapshot = pendingWidgetSnapshot
+            pendingState = nil
+            pendingWidgetSnapshot = false
+            do {
+                try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                let data = try encoder.encode(state)
+                try data.write(to: fileURL, options: .atomic)
+                if shouldSaveWidgetSnapshot {
+                    saveWidgetSnapshot(state)
+                }
+            } catch {
+                assertionFailure("Failed to save state: \(error.localizedDescription)")
+            }
+        }
+
+        isFlushingSaveQueue = false
     }
 
     private func saveWidgetSnapshot(_ state: PersistedAppState) {

@@ -1,6 +1,8 @@
 import SwiftUI
 import WidgetKit
 
+private let scanDeepLinkURL = URL(string: "thistle://scan")!
+
 struct NutritionGoalsEntry: TimelineEntry {
     let date: Date
     let snapshot: WidgetNutritionSnapshot
@@ -173,10 +175,118 @@ struct NutritionGoalsWidget: Widget {
     }
 }
 
+struct QuickScanEntry: TimelineEntry {
+    let date: Date
+}
+
+struct QuickScanProvider: TimelineProvider {
+    func placeholder(in context: Context) -> QuickScanEntry {
+        QuickScanEntry(date: .now)
+    }
+
+    func getSnapshot(in context: Context, completion: @escaping (QuickScanEntry) -> Void) {
+        completion(QuickScanEntry(date: .now))
+    }
+
+    func getTimeline(in context: Context, completion: @escaping (Timeline<QuickScanEntry>) -> Void) {
+        completion(Timeline(entries: [QuickScanEntry(date: .now)], policy: .never))
+    }
+}
+
+struct QuickScanWidgetEntryView: View {
+    @Environment(\.widgetFamily) private var family
+
+    var body: some View {
+        if #available(iOSApplicationExtension 17.0, *) {
+            content
+                .containerBackground(for: .widget) {
+                    background
+                }
+        } else {
+            content
+                .background(background)
+        }
+    }
+
+    private var content: some View {
+        Group {
+            switch family {
+            case .accessoryCircular:
+                ZStack {
+                    Circle()
+                        .fill(Color(hex: "#2CA44F").opacity(0.18))
+                    Image(systemName: "barcode.viewfinder")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Color(hex: "#2CA44F"))
+                }
+                .padding(6)
+
+            case .accessoryRectangular:
+                HStack(spacing: 8) {
+                    Image(systemName: "barcode.viewfinder")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color(hex: "#2CA44F"))
+                    Text("Quick Scan")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .lineLimit(1)
+                }
+
+            default:
+                VStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    Image(systemName: "barcode.viewfinder")
+                        .font(.system(size: 30, weight: .bold))
+                        .foregroundStyle(Color(hex: "#2CA44F"))
+                    Text("Quick Scan")
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                    Text("Thistle")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [Color(hex: "#D75CB8"), Color(hex: "#B42FC2")],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(10)
+        .widgetURL(scanDeepLinkURL)
+    }
+
+    private var background: some View {
+        LinearGradient(
+            colors: [
+                Color(hex: "#F7F5F3"),
+                Color(hex: "#EEE9E5")
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+}
+
+struct QuickScanWidget: Widget {
+    static let kind = "QuickScanWidget"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: Self.kind, provider: QuickScanProvider()) { _ in
+            QuickScanWidgetEntryView()
+        }
+        .configurationDisplayName("Scan With Thistle")
+        .description("Launch Thistle directly to the barcode scanner.")
+        .supportedFamilies([.systemSmall, .accessoryCircular, .accessoryRectangular])
+    }
+}
+
 @main
 struct ThistleWidgetsBundle: WidgetBundle {
     var body: some Widget {
         NutritionGoalsWidget()
+        QuickScanWidget()
     }
 }
 

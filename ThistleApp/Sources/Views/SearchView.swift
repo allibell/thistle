@@ -7,6 +7,9 @@ struct SearchView: View {
     @EnvironmentObject private var store: AppStore
     @State private var showingAddProductSheet = false
     @State private var showingManualProductSheet = false
+    @State private var searchResultLimit = 20
+    @State private var recentHistoryLimit = 4
+    @State private var favoritesLimit = 4
 
     var body: some View {
         ScrollView {
@@ -42,7 +45,7 @@ struct SearchView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if store.hasSubmittedSearch && store.searchResults.isEmpty && !store.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if store.hasSubmittedSearch && !hasAnySubmittedProductSection && !store.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     noResultsActions
                 }
 
@@ -51,9 +54,7 @@ struct SearchView: View {
                 }
 
                 if shouldShowCommittedResults {
-                    ForEach(store.searchResults) { product in
-                        productSearchCard(for: product)
-                    }
+                    committedResultSections
                 }
             }
             .padding()
@@ -77,6 +78,9 @@ struct SearchView: View {
         .onChange(of: store.query) { _, newValue in
             if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 store.clearSearch()
+                searchResultLimit = 20
+                recentHistoryLimit = 4
+                favoritesLimit = 4
             } else {
                 store.hasSubmittedSearch = false
             }
@@ -128,7 +132,154 @@ struct SearchView: View {
 
     private var shouldShowCommittedResults: Bool {
         let trimmed = store.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty || store.hasSubmittedSearch
+        return !trimmed.isEmpty && store.hasSubmittedSearch
+    }
+
+    private var hasAnySubmittedProductSection: Bool {
+        !submittedFavoriteMatches.isEmpty || !submittedRecentMatches.isEmpty || !visibleSearchResults.isEmpty
+    }
+
+    private var committedResultSections: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !submittedFavoriteMatches.isEmpty {
+                Text("Favorites")
+                    .font(.headline)
+                ForEach(submittedFavoriteMatches) { product in
+                    productSearchCard(for: product)
+                }
+            }
+
+            if !submittedRecentMatches.isEmpty {
+                Text("Recent History")
+                    .font(.headline)
+                ForEach(submittedRecentMatches) { product in
+                    productSearchCard(for: product)
+                }
+            }
+
+            if !visibleSearchResults.isEmpty {
+                Text("Search Results")
+                    .font(.headline)
+                ForEach(visibleSearchResults) { product in
+                    productSearchCard(for: product)
+                }
+
+                if remainingSearchResults.count > searchResultLimit {
+                    Button("Show More Results") {
+                        searchResultLimit += 20
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+    }
+
+    private var submittedFavoriteMatches: [Product] {
+        Array(store.favoriteProducts.filter(matchesActiveQuery).prefix(6))
+    }
+
+    private var submittedRecentMatches: [Product] {
+        let favoriteIDs = Set(submittedFavoriteMatches.map(\.id))
+        return Array(
+            store.recentHistoryProducts
+                .filter { !favoriteIDs.contains($0.id) && matchesActiveQuery($0) }
+                .prefix(6)
+        )
+    }
+
+    private var remainingSearchResults: [Product] {
+        let pinnedIDs = Set(submittedFavoriteMatches.map(\.id) + submittedRecentMatches.map(\.id))
+        return store.searchResults.filter { !pinnedIDs.contains($0.id) }
+    }
+
+    private var visibleSearchResults: [Product] {
+        Array(remainingSearchResults.prefix(searchResultLimit))
+    }
+
+    private func matchesActiveQuery(_ product: Product) -> Bool {
+        let trimmed = store.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        let queryTerms = parsedQueryTerms(from: trimmed)
+        guard !queryTerms.isEmpty else { return false }
+
+        let haystack = [
+            product.name,
+            product.brand,
+            product.ingredients.joined(separator: " "),
+            product.stores.joined(separator: " "),
+            product.barcode
+        ]
+            .joined(separator: " ")
+            .lowercased()
+
+        let haystackTerms = Set(normalizedTerms(from: haystack))
+        return queryTerms.allSatisfy { term in
+            if haystack.contains(term) { return true }
+            return haystackTerms.contains { candidate in
+                candidate == term
+                    || (term.count >= 4 && candidate.hasPrefix(term))
+                    || isNearTokenMatch(term, candidate)
+            }
+        }
+    }
+
+    private func normalizedTerms(from text: String) -> [String] {
+        text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count >= 2 }
+    }
+
+    private func parsedQueryTerms(from rawQuery: String) -> [String] {
+        let terms = normalizedTerms(from: rawQuery)
+        let normalized = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var removable: Set<String> = []
+
+        if normalized.contains("whole foods") || normalized.contains("wholefoods") {
+            removable.formUnion(["whole", "foods", "wholefoods", "wfm"])
+        }
+        if normalized.contains("trader joe") || normalized.contains("traderjoes") {
+            removable.formUnion(["trader", "joe", "joes", "traderjoe", "traderjoes"])
+        }
+        if normalized.contains("sprouts") {
+            removable.formUnion(["sprouts"])
+        }
+
+        let required = terms.filter { !removable.contains($0) }
+        return required.isEmpty ? terms : required
+    }
+
+    private func isNearTokenMatch(_ query: String, _ candidate: String) -> Bool {
+        let lengthGap = abs(query.count - candidate.count)
+        if lengthGap > 1 { return false }
+
+        let queryChars = Array(query)
+        let candidateChars = Array(candidate)
+        guard !queryChars.isEmpty, !candidateChars.isEmpty else { return false }
+
+        var mismatches = 0
+        var i = 0
+        var j = 0
+        while i < queryChars.count && j < candidateChars.count {
+            if queryChars[i] == candidateChars[j] {
+                i += 1
+                j += 1
+                continue
+            }
+            mismatches += 1
+            if mismatches > 1 { return false }
+            if queryChars.count > candidateChars.count {
+                i += 1
+            } else if candidateChars.count > queryChars.count {
+                j += 1
+            } else {
+                i += 1
+                j += 1
+            }
+        }
+        mismatches += (queryChars.count - i) + (candidateChars.count - j)
+        return mismatches <= 1
     }
 
     private var searchActions: some View {
@@ -184,8 +335,15 @@ struct SearchView: View {
             Text("Recent History")
                 .font(.headline)
 
-            ForEach(store.recentHistoryProducts) { product in
+            ForEach(store.recentHistoryProducts.prefix(recentHistoryLimit)) { product in
                 productSearchCard(for: product)
+            }
+
+            if store.recentHistoryProducts.count > recentHistoryLimit {
+                Button("Show More Recent") {
+                    recentHistoryLimit += 4
+                }
+                .buttonStyle(.bordered)
             }
         }
     }
@@ -195,8 +353,15 @@ struct SearchView: View {
             Text("Favorites")
                 .font(.headline)
 
-            ForEach(store.favoriteProducts.prefix(8)) { product in
+            ForEach(store.favoriteProducts.prefix(favoritesLimit)) { product in
                 productSearchCard(for: product)
+            }
+
+            if store.favoriteProducts.count > favoritesLimit {
+                Button("Show More Favorites") {
+                    favoritesLimit += 4
+                }
+                .buttonStyle(.bordered)
             }
         }
     }

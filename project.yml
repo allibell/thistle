@@ -28,6 +28,11 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_NSCameraUsageDescription: Scan barcodes to look up foods in your nutrition library.
+        INFOPLIST_KEY_CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: com.allibell.thistle
+            CFBundleURLSchemes:
+              - thistle
         SWIFT_VERSION: 6.0
         TARGETED_DEVICE_FAMILY: "1"
     dependencies:

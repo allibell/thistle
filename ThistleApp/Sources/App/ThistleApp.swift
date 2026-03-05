@@ -13,6 +13,30 @@ private enum FontRegistry {
     }
 }
 
+private enum AppDeepLink {
+    case scan
+
+    init?(url: URL) {
+        guard let scheme = url.scheme?.lowercased(), scheme == "thistle" else { return nil }
+
+        let host = url.host?.lowercased() ?? ""
+        let path = url.path.lowercased()
+        if host == "scan" || path == "/scan" {
+            self = .scan
+            return
+        }
+
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let tabValue = components?.queryItems?.first(where: { $0.name.lowercased() == "tab" })?.value?.lowercased()
+        if tabValue == "scan" {
+            self = .scan
+            return
+        }
+
+        return nil
+    }
+}
+
 @main
 struct ThistleApp: App {
     @StateObject private var store = AppStore()
@@ -25,6 +49,13 @@ struct ThistleApp: App {
         WindowGroup {
             RootTabView()
                 .environmentObject(store)
+                .onOpenURL { url in
+                    guard let deepLink = AppDeepLink(url: url) else { return }
+                    switch deepLink {
+                    case .scan:
+                        store.selectedTab = .scan
+                    }
+                }
         }
     }
 }

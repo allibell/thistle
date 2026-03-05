@@ -5,6 +5,8 @@ struct DiaryView: View {
     @EnvironmentObject private var store: AppStore
     @State private var editingEntry: LoggedFood?
     @State private var showingContributionMetric: GoalMetric?
+    @State private var selectedDate = Date.now
+    @State private var showingDatePicker = false
     @State private var draftServingAmount = 1.0
     @State private var draftServingInput = "1"
     @State private var draftServingError: String?
@@ -12,14 +14,17 @@ struct DiaryView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Today")
+                Text(diaryHeaderTitle)
                     .font(.largeTitle.weight(.bold))
+                    .onLongPressGesture(minimumDuration: 0.35) {
+                        showingDatePicker = true
+                    }
                 progressSection
 
-                if store.loggedFoods.isEmpty {
+                if selectedDayEntries.isEmpty {
                     emptyState
                 } else {
-                    ForEach(store.loggedFoods) { entry in
+                    ForEach(selectedDayEntries) { entry in
                         diaryEntry(entry)
                     }
                 }
@@ -84,11 +89,61 @@ struct DiaryView: View {
         .sheet(item: $showingContributionMetric) { metric in
             NutrientContributionSheet(
                 metric: metric,
-                entries: store.loggedFoods,
+                entries: selectedDayEntries,
                 consumedTotal: consumedAmount(for: metric),
                 goalTotal: goalAmount(for: metric)
             )
         }
+        .sheet(isPresented: $showingDatePicker) {
+            NavigationStack {
+                VStack(spacing: 16) {
+                    DatePicker(
+                        "Diary Date",
+                        selection: $selectedDate,
+                        in: ...Date.now,
+                        displayedComponents: [.date]
+                    )
+                    .datePickerStyle(.graphical)
+                    .labelsHidden()
+                    .padding(.horizontal)
+
+                    Text("Pick a day to view historical diary entries.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    Spacer(minLength: 0)
+                }
+                .padding(.top, 12)
+                .navigationTitle("Select Date")
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") {
+                            showingDatePicker = false
+                        }
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
+    }
+
+    private var selectedDayEntries: [LoggedFood] {
+        store.loggedFoods(on: selectedDate)
+    }
+
+    private var selectedDayNutrition: NutritionFacts {
+        store.nutrition(on: selectedDate)
+    }
+
+    private var diaryHeaderTitle: String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(selectedDate) {
+            return "Today"
+        }
+        if calendar.isDateInYesterday(selectedDate) {
+            return "Yesterday"
+        }
+        return selectedDate.formatted(date: .abbreviated, time: .omitted)
     }
 
     private var progressSection: some View {
@@ -96,19 +151,19 @@ struct DiaryView: View {
             Text("Goal Progress")
                 .font(.headline)
 
-            MacroSummaryView(nutrition: store.todayNutrition)
+            MacroSummaryView(nutrition: selectedDayNutrition)
 
-            progressRow(metric: .calories, current: Double(store.todayNutrition.calories), goal: Double(store.goals.calories))
-            progressRow(metric: .protein, current: store.todayNutrition.protein, goal: store.goals.protein)
-            progressRow(metric: .carbs, current: store.todayNutrition.carbs, goal: store.goals.carbs)
-            progressRow(metric: .fat, current: store.todayNutrition.fat, goal: store.goals.fat)
+            progressRow(metric: .calories, current: Double(selectedDayNutrition.calories), goal: Double(store.goals.calories))
+            progressRow(metric: .protein, current: selectedDayNutrition.protein, goal: store.goals.protein)
+            progressRow(metric: .carbs, current: selectedDayNutrition.carbs, goal: store.goals.carbs)
+            progressRow(metric: .fat, current: selectedDayNutrition.fat, goal: store.goals.fat)
 
             Divider()
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Other Nutrition Goals")
                     .font(.subheadline.weight(.semibold))
-                progressRow(metric: .fiber, current: store.todayNutrition.fiber, goal: store.goals.fiber)
+                progressRow(metric: .fiber, current: selectedDayNutrition.fiber, goal: store.goals.fiber)
             }
         }
         .padding()
@@ -280,7 +335,7 @@ struct DiaryView: View {
                         .foregroundStyle(.secondary)
                 }
                 ProgressView(value: progress)
-                    .tint(progress >= 1 ? ThistleTheme.primaryGreen : .accentColor)
+                    .tint(progressTint(for: metric, current: current, goal: goal))
             }
         }
         .buttonStyle(.plain)
@@ -288,13 +343,20 @@ struct DiaryView: View {
         .accessibilityLabel("Show \(metric.title) contributors")
     }
 
+    private func progressTint(for metric: GoalMetric, current: Double, goal: Double) -> Color {
+        if metric == .calories, current > goal {
+            return ThistleTheme.warning
+        }
+        return ThistleTheme.primaryGreen
+    }
+
     private func consumedAmount(for metric: GoalMetric) -> Double {
         switch metric {
-        case .calories: return Double(store.todayNutrition.calories)
-        case .protein: return store.todayNutrition.protein
-        case .carbs: return store.todayNutrition.carbs
-        case .fat: return store.todayNutrition.fat
-        case .fiber: return store.todayNutrition.fiber
+        case .calories: return Double(selectedDayNutrition.calories)
+        case .protein: return selectedDayNutrition.protein
+        case .carbs: return selectedDayNutrition.carbs
+        case .fat: return selectedDayNutrition.fat
+        case .fiber: return selectedDayNutrition.fiber
         }
     }
 

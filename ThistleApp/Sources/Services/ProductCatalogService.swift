@@ -31,13 +31,25 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
         var aggregate: [Product] = localCandidates
         let variants = queryVariants(for: trimmed)
         let maxVariantCount = localCandidates.count >= 8 ? 2 : variants.count
+        var encounteredNetworkError = false
 
         for variant in variants.prefix(maxVariantCount) {
-            let fetched = try await openFoodFacts.searchProducts(matching: variant)
+            let fetched: [Product]
+            do {
+                fetched = try await openFoodFacts.searchProducts(matching: variant)
+            } catch {
+                encounteredNetworkError = true
+                continue
+            }
             if !fetched.isEmpty {
                 aggregate += fetched
             }
             if aggregate.count >= 24 { break }
+        }
+
+        if aggregate.isEmpty, encounteredNetworkError {
+            // Fail soft: avoid surfacing hard search failures to UI for transient catalog/API issues.
+            return localCandidates
         }
 
         let deduped = deduplicate(aggregate)
@@ -57,14 +69,14 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
         }
 
         for variant in variants {
-            if let product = try await openFoodFacts.product(forBarcode: variant) {
+            if let product = (try? await openFoodFacts.product(forBarcode: variant)) ?? nil {
                 await localIndex.upsert(products: [product])
                 return product
             }
         }
 
         for variant in variants {
-            if let product = try await upcItemDB.product(forBarcode: variant) {
+            if let product = (try? await upcItemDB.product(forBarcode: variant)) ?? nil {
                 await localIndex.upsert(products: [product])
                 return product
             }
