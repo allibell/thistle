@@ -19,6 +19,7 @@ enum CatalogError: LocalizedError {
 struct ProductCatalogService: ProductCatalogServing, Sendable {
     private let openFoodFacts = OpenFoodFactsClient()
     private let upcItemDB = UPCItemDBClient()
+    private let localIndex = LocalCatalogSearchIndex.shared
 
     func searchProducts(matching query: String) async throws -> [Product] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -26,10 +27,12 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
             throw CatalogError.invalidQuery
         }
 
-        var aggregate: [Product] = []
+        let localCandidates = await localIndex.searchProducts(matching: trimmed, limit: 16)
+        var aggregate: [Product] = localCandidates
         let variants = queryVariants(for: trimmed)
+        let maxVariantCount = localCandidates.count >= 8 ? 2 : variants.count
 
-        for variant in variants {
+        for variant in variants.prefix(maxVariantCount) {
             let fetched = try await openFoodFacts.searchProducts(matching: variant)
             if !fetched.isEmpty {
                 aggregate += fetched
@@ -38,7 +41,9 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
         }
 
         let deduped = deduplicate(aggregate)
-        return deduped.sorted { rankingScore(for: $0, query: trimmed) > rankingScore(for: $1, query: trimmed) }
+        let sorted = deduped.sorted { rankingScore(for: $0, query: trimmed) > rankingScore(for: $1, query: trimmed) }
+        await localIndex.upsert(products: sorted.prefix(40).map { $0 })
+        return sorted
     }
 
     func product(forBarcode barcode: String) async throws -> Product? {
@@ -46,13 +51,21 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
         guard !variants.isEmpty else { return nil }
 
         for variant in variants {
+            if let product = await localIndex.product(forBarcode: variant) {
+                return product
+            }
+        }
+
+        for variant in variants {
             if let product = try await openFoodFacts.product(forBarcode: variant) {
+                await localIndex.upsert(products: [product])
                 return product
             }
         }
 
         for variant in variants {
             if let product = try await upcItemDB.product(forBarcode: variant) {
+                await localIndex.upsert(products: [product])
                 return product
             }
         }

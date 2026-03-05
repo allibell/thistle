@@ -1,9 +1,9 @@
 import SwiftUI
 
 enum ThistleTheme {
-    static let canvas = Color(hex: "#F2F1F0")
-    static let card = Color(hex: "#EBE9E7")
-    static let cardElevated = Color.white.opacity(0.92)
+    static let canvas = Color.adaptive(light: "#F2F1F0", dark: "#121214")
+    static let card = Color.adaptive(light: "#EBE9E7", dark: "#1D1D21")
+    static let cardElevated = Color.adaptive(light: "#FFFFFF", dark: "#2A2A2F")
     static let primaryGreen = Color(hex: "#2CA44F")
     static let stemGreen = Color(hex: "#6BC045")
     static let blossomPurple = Color(hex: "#B42FC2")
@@ -40,4 +40,19 @@ extension Color {
             opacity: 1
         )
     }
+
+#if canImport(UIKit)
+    static func adaptive(light: String, dark: String) -> Color {
+        Color(UIColor { traits in
+            if traits.userInterfaceStyle == .dark {
+                return UIColor(Color(hex: dark))
+            }
+            return UIColor(Color(hex: light))
+        })
+    }
+#else
+    static func adaptive(light: String, dark: String) -> Color {
+        Color(hex: light)
+    }
+#endif
 }

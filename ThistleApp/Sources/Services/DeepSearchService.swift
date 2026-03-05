@@ -355,7 +355,8 @@ private struct WebFallbackClient: Sendable {
             "\"\(query)\" site:amazon.com whole foods nutrition",
             "\"\(query)\" safeway nutrition",
             "\"\(query)\" instacart nutrition facts",
-            "\"\(query)\" site:myfooddiary.com nutrition facts"
+            "\"\(query)\" site:myfooddiary.com nutrition facts",
+            "\"\(query)\" site:eatthismuch.com nutrition facts"
         ]
 
         for fastQuery in fastQueries {
@@ -372,6 +373,8 @@ private struct WebFallbackClient: Sendable {
                 "\"\(query)\" site:safeway.com product-details",
                 "\"\(query)\" site:myfooddiary.com nutrition",
                 "\"\(query)\" site:myfooddiary.com ingredients",
+                "\"\(query)\" site:eatthismuch.com nutrition",
+                "\"\(query)\" site:eatthismuch.com ingredients",
                 "\"\(query)\" back label ingredients"
             ]
             for slowQuery in slowQueries {
@@ -625,6 +628,7 @@ private struct WebFallbackClient: Sendable {
         if value.contains("safewaycdn") { score += 4 }
         if value.contains("instacart") { score += 2 }
         if value.contains("myfooddiary") { score += 2 }
+        if value.contains("eatthismuch") { score += 3 }
         if value.hasSuffix(".jpg") || value.hasSuffix(".jpeg") || value.hasSuffix(".png") || value.hasSuffix(".webp") {
             score += 2
         }
