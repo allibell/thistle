@@ -22,6 +22,7 @@ struct MacroSummaryView: View {
             macroPill(title: "P", value: "\(nutrition.protein.formatted(.number.precision(.fractionLength(0))))g")
             macroPill(title: "C", value: "\(nutrition.carbs.formatted(.number.precision(.fractionLength(0))))g")
             macroPill(title: "F", value: "\(nutrition.fat.formatted(.number.precision(.fractionLength(0))))g")
+            macroPill(title: "Fi", value: "\(nutrition.fiber.formatted(.number.precision(.fractionLength(0...1))))g")
         }
     }
 

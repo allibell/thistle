@@ -5,6 +5,9 @@ struct MealsView: View {
     @EnvironmentObject private var store: AppStore
     @State private var showingBuilder = false
     @State private var editingMeal: SavedMeal?
+    @State private var viewingMeal: SavedMeal?
+    @State private var didJustLogMealID: String?
+    @State private var mealLoggedTask: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -20,6 +23,9 @@ struct MealsView: View {
                 ForEach(store.meals) { meal in
                     mealCard(meal)
                         .contextMenu {
+                            Button("View Details") {
+                                viewingMeal = meal
+                            }
                             Button("Edit Meal") {
                                 editingMeal = meal
                             }
@@ -35,11 +41,20 @@ struct MealsView: View {
         }
         .background(ThistleTheme.canvas.ignoresSafeArea())
         .thistleNavigationTitle("Meals")
+        .onDisappear {
+            mealLoggedTask?.cancel()
+            mealLoggedTask = nil
+        }
         .sheet(isPresented: $showingBuilder) {
             MealBuilderView(existingMeal: nil)
         }
         .sheet(item: $editingMeal) { meal in
             MealBuilderView(existingMeal: meal)
+        }
+        .sheet(item: $viewingMeal) { meal in
+            NavigationStack {
+                MealDetailView(meal: meal)
+            }
         }
     }
 
@@ -82,10 +97,29 @@ struct MealsView: View {
                     .foregroundStyle(analysis.rating.color)
             }
 
-            Button("Log Meal") {
-                store.log(meal: meal)
+            HStack(spacing: 10) {
+                Button("Log Meal") {
+                    store.log(meal: meal)
+                    showMealLoggedConfirmation(mealID: meal.id)
+                }
+                .buttonStyle(.bordered)
+
+                Button("View Details") {
+                    viewingMeal = meal
+                }
+                .buttonStyle(.bordered)
+
+                if didJustLogMealID == meal.id {
+                    Label("Logged!", systemImage: "checkmark.circle.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(ThistleTheme.primaryGreen)
+                        .transition(.opacity.combined(with: .scale))
+                }
             }
-            .buttonStyle(.bordered)
+
+            Text("Fiber: \(meal.nutrition.fiber.formatted(.number.precision(.fractionLength(0...1))))g")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding()
         .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
@@ -99,6 +133,23 @@ struct MealsView: View {
             .foregroundStyle(rating.color)
             .background(rating.color.opacity(0.16), in: Capsule())
     }
+
+    private func showMealLoggedConfirmation(mealID: String) {
+        mealLoggedTask?.cancel()
+        withAnimation(.easeOut(duration: 0.18)) {
+            didJustLogMealID = mealID
+        }
+
+        mealLoggedTask = Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeIn(duration: 0.2)) {
+                    didJustLogMealID = nil
+                }
+            }
+        }
+    }
 }
 
 struct MealBuilderView: View {
@@ -111,7 +162,10 @@ struct MealBuilderView: View {
     @State private var remoteSearchResults: [Product] = []
     @State private var semanticFallbackProduct: Product?
     @State private var isSearchingCatalog = false
+    @State private var isInferringMealNutrition = false
     @State private var searchError: String?
+    @State private var mealInferenceMessage: String?
+    @State private var mealInferenceMessageIsError = false
     @State private var searchTask: Task<Void, Never>?
     @State private var hasSubmittedProductSearch = false
     @State private var previewProduct: Product?
@@ -195,6 +249,26 @@ struct MealBuilderView: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .font(.footnote)
+
+                        Button {
+                            Task { await inferMealNutritionAndAddItem() }
+                        } label: {
+                            if isInferringMealNutrition {
+                                Label("Inferring...", systemImage: "sparkles")
+                            } else {
+                                Label("Infer Nutrition", systemImage: "sparkles")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .font(.footnote)
+                        .disabled(isInferringMealNutrition || mealInferenceSeedTitle.isEmpty)
+                    }
+
+                    if let mealInferenceMessage, !mealInferenceMessage.isEmpty {
+                        Text(mealInferenceMessage)
+                            .font(.footnote)
+                            .foregroundStyle(mealInferenceMessageIsError ? ThistleTheme.warning : Color.secondary)
                     }
                 }
 
@@ -202,6 +276,18 @@ struct MealBuilderView: View {
                     Section("Selected Items") {
                         ForEach(selectedProducts) { product in
                             productRow(product)
+                        }
+                    }
+                }
+
+                if !selectedProducts.isEmpty {
+                    Section("Meal Nutrition") {
+                        MacroSummaryView(nutrition: draftMealNutrition)
+                        HStack {
+                            Text("Fiber")
+                            Spacer()
+                            Text("\(draftMealNutrition.fiber.formatted(.number.precision(.fractionLength(0...1))))g")
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -253,7 +339,7 @@ struct MealBuilderView: View {
             }) {
                 ProductEntrySheet(
                     existingProduct: nil,
-                    defaultQuery: productQuery,
+                    defaultQuery: productQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? name : productQuery,
                     allowLinkMode: false
                 )
             }
@@ -316,6 +402,68 @@ struct MealBuilderView: View {
         guard trimmed.count >= 2 else { return }
         hasSubmittedProductSearch = true
         scheduleCatalogSearch(for: trimmed)
+    }
+
+    private var mealInferenceSeedTitle: String {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedName.isEmpty { return trimmedName }
+
+        let trimmedQuery = productQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedQuery.isEmpty { return trimmedQuery }
+
+        return selectedProducts.first?.name ?? ""
+    }
+
+    private var mealInferenceIngredientsText: String {
+        selectedProducts
+            .flatMap(\.ingredients)
+            .prefix(20)
+            .joined(separator: ", ")
+    }
+
+    @MainActor
+    private func inferMealNutritionAndAddItem() async {
+        mealInferenceMessage = nil
+        mealInferenceMessageIsError = false
+        isInferringMealNutrition = true
+        defer { isInferringMealNutrition = false }
+
+        let titleSeed = mealInferenceSeedTitle
+        let ingredientsSeed = mealInferenceIngredientsText
+        guard !titleSeed.isEmpty || !ingredientsSeed.isEmpty else {
+            mealInferenceMessage = "Add a meal title or items first."
+            mealInferenceMessageIsError = true
+            return
+        }
+
+        guard let estimate = await store.inferNutritionEstimate(title: titleSeed, ingredientsText: ingredientsSeed) else {
+            mealInferenceMessage = "Could not infer meal nutrition from the available details."
+            mealInferenceMessageIsError = true
+            return
+        }
+
+        let inferredName = titleSeed.isEmpty ? "Inferred Meal Item" : "\(titleSeed) (Inferred)"
+        let inferredProduct = store.saveManualProduct(
+            name: inferredName,
+            brand: "Estimated",
+            barcode: "",
+            servingDescription: estimate.servingDescription,
+            ingredientsText: ingredientsSeed.isEmpty ? estimate.ingredients.joined(separator: ", ") : ingredientsSeed,
+            calories: estimate.nutrition.calories,
+            protein: estimate.nutrition.protein,
+            carbs: estimate.nutrition.carbs,
+            fat: estimate.nutrition.fat,
+            fiber: estimate.nutrition.fiber,
+            storesText: "",
+            imageURLText: ""
+        )
+
+        servingsByProduct[inferredProduct.id] = max(1, servingsByProduct[inferredProduct.id, default: 0])
+        selectedProductCache[inferredProduct.id] = inferredProduct
+        hasSubmittedProductSearch = true
+        rebuildKnownProducts()
+
+        mealInferenceMessage = "Added inferred item. \(estimate.sourceSummary)"
     }
 
     @MainActor
@@ -382,6 +530,13 @@ struct MealBuilderView: View {
                 return lhsUsage > rhsUsage
             }
         return Array(prioritized.prefix(10))
+    }
+
+    private var draftMealNutrition: NutritionFacts {
+        selectedProducts.reduce(.zero) { partial, product in
+            let servings = servingsByProduct[product.id, default: 0]
+            return partial + (product.nutrition * servings)
+        }
     }
 
     private var shouldShowRecentSuggestions: Bool {
@@ -692,6 +847,72 @@ struct MealBuilderView: View {
             + (semanticFallbackProduct.map { [$0] } ?? [])
             + (existingMeal?.components.map(\.product) ?? [])
         )
+    }
+
+    private func miniStatusBadge(rating: ComplianceRating) -> some View {
+        Text(rating.title.uppercased())
+            .font(.caption2.weight(.bold))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .foregroundStyle(rating.color)
+            .background(rating.color.opacity(0.16), in: Capsule())
+    }
+}
+
+struct MealDetailView: View {
+    @EnvironmentObject private var store: AppStore
+    let meal: SavedMeal
+
+    var body: some View {
+        let analysis = store.analysis(for: meal)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text(meal.name)
+                            .font(.title2.weight(.bold))
+                        Spacer()
+                        RatingBadge(rating: analysis.rating)
+                    }
+
+                    MacroSummaryView(nutrition: meal.nutrition)
+                    HStack {
+                        Text("Fiber")
+                        Spacer()
+                        Text("\(meal.nutrition.fiber.formatted(.number.precision(.fractionLength(0...1))))g")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding()
+                .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Ingredients")
+                        .font(.headline)
+                    ForEach(meal.components) { component in
+                        let componentAnalysis = store.analysis(for: component.product)
+                        HStack(alignment: .top, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\(component.servings.formatted())x \(component.product.name)")
+                                    .font(.subheadline.weight(.semibold))
+                                if !component.product.hasIngredientDetails {
+                                    Text("Missing ingredients")
+                                        .font(.caption2)
+                                        .foregroundStyle(ThistleTheme.warning)
+                                }
+                            }
+                            Spacer()
+                            miniStatusBadge(rating: componentAnalysis.rating)
+                        }
+                    }
+                }
+                .padding()
+                .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
+            }
+            .padding()
+        }
+        .background(ThistleTheme.canvas.ignoresSafeArea())
+        .thistleNavigationTitle("Meal Details")
     }
 
     private func miniStatusBadge(rating: ComplianceRating) -> some View {

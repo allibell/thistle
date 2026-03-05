@@ -12,6 +12,8 @@
 		12B9BA9B110F85A1826F4F17 /* DiaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D869E5234B4DF4CD04D85215 /* DiaryView.swift */; };
 		160ACEE0AAB38895869568FF /* ThistleTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65A8744EEBED47326C4FF0C1 /* ThistleTheme.swift */; };
 		1B15392BA8A61437081324CF /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A7763A456EC44FA70066F77 /* RootTabView.swift */; };
+		2E5422E30128DCD44E78DAA4 /* WidgetNutritionSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84B4159507BD58A879FCBA41 /* WidgetNutritionSnapshot.swift */; };
+		307E56AFEA0CD8F41C99477E /* ThistleWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BCABBFB8D32DE1A88ADEF5FD /* ThistleWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		33B926E56A34904D0DB23A6B /* ProductDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1B0326532AA2A269E54964B /* ProductDetailView.swift */; };
 		568BAB695AE0EA0E0E20AA0B /* SampleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 588DE83D1ABF96A3BC4E5D43 /* SampleData.swift */; };
 		57E3E2A443DA7DBBD3FFB34B /* BitcountInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 92427DC9A1251F31F8EF8790 /* BitcountInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf */; };
@@ -21,6 +23,7 @@
 		706970B38D5DC812705FD29E /* SharedViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77AB5F1E109998E866B1A422 /* SharedViews.swift */; };
 		85E64854F1801102A9875EAC /* ScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B610C171A8F6027655E6E4A /* ScanView.swift */; };
 		8D7E0E3AFE1646EA367266A4 /* IngredientAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBF83D08D07E521287F90A8E /* IngredientAnalyzer.swift */; };
+		9EA28EB98DB957C00E5BA0FD /* WidgetNutritionSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84B4159507BD58A879FCBA41 /* WidgetNutritionSnapshot.swift */; };
 		A2D910C06474C6B283EB4AE7 /* ProductCatalogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7604E154EAE49BC475E72FF0 /* ProductCatalogService.swift */; };
 		A6F97033B700B2D0DD8C8CE4 /* GoalsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED20BDA66DA7EF678260FD2 /* GoalsView.swift */; };
 		A99FFD6565F9EBA07F8F9F32 /* DeepSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA6526FB9CE2F1EF6A3353FD /* DeepSearchService.swift */; };
@@ -29,8 +32,34 @@
 		CA12053F911504C27FCE6579 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 00DEA0FA2BC3DBDD903C07A5 /* Assets.xcassets */; };
 		D2A1080F4E1C83D0C24F56E8 /* NutritionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FF5B9402859F0DDC532FB62 /* NutritionModels.swift */; };
 		D4011F1C0D1B19B287E05B9A /* UnicaOne-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 56AC1651C0FC3D148FB88892 /* UnicaOne-Regular.ttf */; };
+		D957BC66181AAAA835E13A71 /* ProductEntrySheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D16AAEDB8A8E7FDE39BE68FC /* ProductEntrySheet.swift */; };
 		EF3A8F74820EACDAB57C9ABD /* ThistleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B66191DC097214D5BD3030CD /* ThistleApp.swift */; };
+		FB6391274E945F3AC0CE55EE /* NutritionGoalsWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97576D7AC9A576061510979A /* NutritionGoalsWidget.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		F0D53F22D17E895F1CE4F27C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 968A19CA21DB5687757E0EDC /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4C0E3E74B2AA9B913C7FE42C;
+			remoteInfo = ThistleWidgets;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		C0BF1BB7D41842407B6204CA /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				307E56AFEA0CD8F41C99477E /* ThistleWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		00DEA0FA2BC3DBDD903C07A5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -49,9 +78,13 @@
 		7604E154EAE49BC475E72FF0 /* ProductCatalogService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductCatalogService.swift; sourceTree = "<group>"; };
 		77AB5F1E109998E866B1A422 /* SharedViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedViews.swift; sourceTree = "<group>"; };
 		7B610C171A8F6027655E6E4A /* ScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanView.swift; sourceTree = "<group>"; };
+		84B4159507BD58A879FCBA41 /* WidgetNutritionSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetNutritionSnapshot.swift; sourceTree = "<group>"; };
 		92427DC9A1251F31F8EF8790 /* BitcountInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "BitcountInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf"; sourceTree = "<group>"; };
+		97576D7AC9A576061510979A /* NutritionGoalsWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NutritionGoalsWidget.swift; sourceTree = "<group>"; };
 		B66191DC097214D5BD3030CD /* ThistleApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThistleApp.swift; sourceTree = "<group>"; };
+		BCABBFB8D32DE1A88ADEF5FD /* ThistleWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ThistleWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		C1B0326532AA2A269E54964B /* ProductDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductDetailView.swift; sourceTree = "<group>"; };
+		D16AAEDB8A8E7FDE39BE68FC /* ProductEntrySheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductEntrySheet.swift; sourceTree = "<group>"; };
 		D869E5234B4DF4CD04D85215 /* DiaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiaryView.swift; sourceTree = "<group>"; };
 		DEA8C0660D468047F7C570BD /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
 		EBF83D08D07E521287F90A8E /* IngredientAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IngredientAnalyzer.swift; sourceTree = "<group>"; };
@@ -99,6 +132,7 @@
 			isa = PBXGroup;
 			children = (
 				38199B819F7E976E29D764A6 /* Thistle.app */,
+				BCABBFB8D32DE1A88ADEF5FD /* ThistleWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -118,6 +152,7 @@
 				B9E28513014991ACC75A92D3 /* App */,
 				2F228E8C308B22285D09E6C5 /* Models */,
 				AB3DCEF35AE2D3E64816F4C8 /* Services */,
+				8F0549FF8B012D55610C49A0 /* Shared */,
 				5B95A498670BE8DC2C8965BA /* ViewModels */,
 				7BDB6270F1EF7768B7F86487 /* Views */,
 			);
@@ -132,6 +167,7 @@
 				3ED20BDA66DA7EF678260FD2 /* GoalsView.swift */,
 				0D31C97555E7FEA256B10086 /* MealsView.swift */,
 				C1B0326532AA2A269E54964B /* ProductDetailView.swift */,
+				D16AAEDB8A8E7FDE39BE68FC /* ProductEntrySheet.swift */,
 				0A7763A456EC44FA70066F77 /* RootTabView.swift */,
 				7B610C171A8F6027655E6E4A /* ScanView.swift */,
 				66E084ED6470503586CEBA70 /* SearchView.swift */,
@@ -140,11 +176,20 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
+		8F0549FF8B012D55610C49A0 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				84B4159507BD58A879FCBA41 /* WidgetNutritionSnapshot.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
 		9440734941B40EE1AB38A465 = {
 			isa = PBXGroup;
 			children = (
 				63FCA750BB651DB52D19EEE5 /* Resources */,
 				6E4DEE9018A6E22001C3805F /* Sources */,
+				CAA3F09BAF6E9289C017DC67 /* Sources */,
 				057AC9DE11044D6BF067DFA9 /* ThistleApp */,
 				62F96597826FE22352B4AEE4 /* Products */,
 			);
@@ -172,19 +217,47 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		CAA3F09BAF6E9289C017DC67 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				97576D7AC9A576061510979A /* NutritionGoalsWidget.swift */,
+			);
+			name = Sources;
+			path = ThistleWidgets/Sources;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		4C0E3E74B2AA9B913C7FE42C /* ThistleWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9D818EBE66A637E415E89465 /* Build configuration list for PBXNativeTarget "ThistleWidgets" */;
+			buildPhases = (
+				BABCE06C3DB9DD7159046A8D /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ThistleWidgets;
+			packageProductDependencies = (
+			);
+			productName = ThistleWidgets;
+			productReference = BCABBFB8D32DE1A88ADEF5FD /* ThistleWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		6E88E2734F6BB93192674C79 /* Thistle */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 02A0064B45E867C7835C9FEF /* Build configuration list for PBXNativeTarget "Thistle" */;
 			buildPhases = (
 				2D0EEB6BEFFF94A744020DB8 /* Sources */,
 				654F5AED03F3959DEA5E7FCE /* Resources */,
+				C0BF1BB7D41842407B6204CA /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				270F98AA6750CE677F0E5A06 /* PBXTargetDependency */,
 			);
 			name = Thistle;
 			packageProductDependencies = (
@@ -216,6 +289,7 @@
 			projectRoot = "";
 			targets = (
 				6E88E2734F6BB93192674C79 /* Thistle */,
+				4C0E3E74B2AA9B913C7FE42C /* ThistleWidgets */,
 			);
 		};
 /* End PBXProject section */
@@ -251,6 +325,7 @@
 				D2A1080F4E1C83D0C24F56E8 /* NutritionModels.swift in Sources */,
 				A2D910C06474C6B283EB4AE7 /* ProductCatalogService.swift in Sources */,
 				33B926E56A34904D0DB23A6B /* ProductDetailView.swift in Sources */,
+				D957BC66181AAAA835E13A71 /* ProductEntrySheet.swift in Sources */,
 				1B15392BA8A61437081324CF /* RootTabView.swift in Sources */,
 				568BAB695AE0EA0E0E20AA0B /* SampleData.swift in Sources */,
 				85E64854F1801102A9875EAC /* ScanView.swift in Sources */,
@@ -258,16 +333,35 @@
 				706970B38D5DC812705FD29E /* SharedViews.swift in Sources */,
 				EF3A8F74820EACDAB57C9ABD /* ThistleApp.swift in Sources */,
 				160ACEE0AAB38895869568FF /* ThistleTheme.swift in Sources */,
+				9EA28EB98DB957C00E5BA0FD /* WidgetNutritionSnapshot.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BABCE06C3DB9DD7159046A8D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FB6391274E945F3AC0CE55EE /* NutritionGoalsWidget.swift in Sources */,
+				2E5422E30128DCD44E78DAA4 /* WidgetNutritionSnapshot.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		270F98AA6750CE677F0E5A06 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4C0E3E74B2AA9B913C7FE42C /* ThistleWidgets */;
+			targetProxy = F0D53F22D17E895F1CE4F27C /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		22CCFC8DAB4699FB290310AE /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = ThistleApp/Thistle.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				DEVELOPMENT_TEAM = G3SJ7D5CMQ;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -293,6 +387,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = ThistleApp/Thistle.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				DEVELOPMENT_TEAM = G3SJ7D5CMQ;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -435,6 +530,46 @@
 			};
 			name = Release;
 		};
+		8AA4B67351D19B336BC61FC2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ThistleWidgets/ThistleWidgets.entitlements;
+				DEVELOPMENT_TEAM = G3SJ7D5CMQ;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ThistleWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.allibell.thistle.widgets;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		EA2947C102A7D9ECE632FE55 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ThistleWidgets/ThistleWidgets.entitlements;
+				DEVELOPMENT_TEAM = G3SJ7D5CMQ;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ThistleWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.allibell.thistle.widgets;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -443,6 +578,15 @@
 			buildConfigurations = (
 				5DACBEE171E7574A83547098 /* Debug */,
 				22CCFC8DAB4699FB290310AE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		9D818EBE66A637E415E89465 /* Build configuration list for PBXNativeTarget "ThistleWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8AA4B67351D19B336BC61FC2 /* Debug */,
+				EA2947C102A7D9ECE632FE55 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

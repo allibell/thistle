@@ -65,9 +65,7 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
         var variants: [String] = [query]
         let ingredientIntent = isIngredientIntent(query)
 
-        let terms = normalized
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { $0.count >= 2 }
+        let terms = normalizedTerms(normalized)
 
         if terms.count >= 2 {
             variants.append(terms.joined(separator: " "))
@@ -95,10 +93,26 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
             variants.append("malk vanilla almond milk")
         }
 
+        if terms.contains(where: { $0 == "crisp" || $0 == "crisps" || $0 == "cracker" || $0 == "crackers" }) {
+            variants.append(terms.map { $0 == "crisps" ? "crisp" : $0 }.joined(separator: " "))
+            variants.append(terms.map { ($0 == "crisp" || $0 == "crisps") ? "crackers" : $0 }.joined(separator: " "))
+            variants.append(terms.map { ($0 == "cracker" || $0 == "crackers") ? "crisps" : $0 }.joined(separator: " "))
+        }
+
+        let genericTerms = terms.filter { !brandOrStoreNoiseTerms.contains($0) }
+        if genericTerms.count >= 2 {
+            variants.append(genericTerms.joined(separator: " "))
+        }
+
         if ingredientIntent {
             variants.append("\(query) raw")
             variants.append("\(query) plain")
             variants.append("\(query) unsalted")
+        }
+
+        let semantic = semanticTokens(query)
+        if semantic.count >= 2 {
+            variants.append(semantic.joined(separator: " "))
         }
 
         return Array(NSOrderedSet(array: variants.compactMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty }).compactMap { $0 as? String })
@@ -118,15 +132,34 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
     }
 
     private func rankingScore(for product: Product, query: String) -> Int {
-        let haystack = "\(product.brand) \(product.name)".lowercased()
-        let terms = normalizedTerms(query)
-        let matches = terms.reduce(into: 0) { total, term in
-            if haystack.contains(term) { total += 1 }
+        let queryTokens = semanticTokens(query)
+        let productTokens = semanticTokens("\(product.brand) \(product.name)")
+        let productTokenSet = Set(productTokens)
+
+        let exactMatches = queryTokens.reduce(into: 0) { total, term in
+            if productTokenSet.contains(term) { total += 1 }
         }
-        var score = (matches * 20) + (product.dataCompletenessScore * 8)
+        let fuzzyMatches = queryTokens.reduce(into: 0) { total, term in
+            if productTokenSet.contains(term) { return }
+            if productTokenSet.contains(where: { isFuzzyTokenMatch(term, $0) }) {
+                total += 1
+            }
+        }
+
+        var score = ((exactMatches * 22) + (fuzzyMatches * 10)) + (product.dataCompletenessScore * 8)
+        let normalizedHaystack = normalizedComparableText("\(product.brand) \(product.name)")
+        let normalizedQuery = normalizedComparableText(query)
+        if !normalizedQuery.isEmpty, normalizedHaystack.contains(normalizedQuery) {
+            score += 30
+        }
+
+        if normalizedComparableText(product.brand).contains("trader joe"),
+           normalizedQuery.contains("trader joe") || normalizedQuery.contains("tj") {
+            score += 24
+        }
 
         if isIngredientIntent(query) {
-            score += ingredientSimplicityScore(for: product, queryTerms: Set(terms))
+            score += ingredientSimplicityScore(for: product, queryTerms: Set(queryTokens))
         }
 
         return score
@@ -137,6 +170,72 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
             .lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { $0.count >= 2 }
+    }
+
+    private func semanticTokens(_ text: String) -> [String] {
+        normalizedTerms(normalizedComparableText(text)).map(canonicalToken)
+    }
+
+    private func normalizedComparableText(_ text: String) -> String {
+        text
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .lowercased()
+            .replacingOccurrences(of: "&", with: " and ")
+            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func canonicalToken(_ token: String) -> String {
+        let normalized = token.lowercased()
+        if normalized == "tj" || normalized == "tjs" || normalized == "traderjoes" {
+            return "trader"
+        }
+        if normalized == "joes" || normalized == "joe" {
+            return "joe"
+        }
+        if normalized == "crisps" { return "crisp" }
+        if normalized == "crackers" { return "cracker" }
+        if normalized.hasSuffix("ies"), normalized.count > 3 {
+            return String(normalized.dropLast(3)) + "y"
+        }
+        if normalized.hasSuffix("es"), normalized.count > 4 {
+            return String(normalized.dropLast(2))
+        }
+        if normalized.hasSuffix("s"), normalized.count > 3 {
+            return String(normalized.dropLast())
+        }
+        return normalized
+    }
+
+    private func isFuzzyTokenMatch(_ lhs: String, _ rhs: String) -> Bool {
+        let lengthGap = abs(lhs.count - rhs.count)
+        if lengthGap > 2 { return false }
+        let distance = levenshteinDistance(lhs, rhs)
+        if min(lhs.count, rhs.count) <= 5 {
+            return distance <= 1
+        }
+        return distance <= 2
+    }
+
+    private func levenshteinDistance(_ lhs: String, _ rhs: String) -> Int {
+        let lhsChars = Array(lhs)
+        let rhsChars = Array(rhs)
+        if lhsChars.isEmpty { return rhsChars.count }
+        if rhsChars.isEmpty { return lhsChars.count }
+
+        var previous = Array(0...rhsChars.count)
+        for (i, lhsChar) in lhsChars.enumerated() {
+            var current = [i + 1]
+            for (j, rhsChar) in rhsChars.enumerated() {
+                let insertion = current[j] + 1
+                let deletion = previous[j + 1] + 1
+                let substitution = previous[j] + (lhsChar == rhsChar ? 0 : 1)
+                current.append(min(insertion, deletion, substitution))
+            }
+            previous = current
+        }
+        return previous[rhsChars.count]
     }
 
     private func isIngredientIntent(_ query: String) -> Bool {
@@ -182,6 +281,10 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
         return score
     }
 }
+
+private let brandOrStoreNoiseTerms: Set<String> = [
+    "trader", "joe", "joes", "tj", "tjs", "market", "foods", "whole", "store"
+]
 
 private struct OpenFoodFactsClient: Sendable {
     private let session: URLSession

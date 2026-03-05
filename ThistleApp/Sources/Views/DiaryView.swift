@@ -4,6 +4,7 @@ import Foundation
 struct DiaryView: View {
     @EnvironmentObject private var store: AppStore
     @State private var editingEntry: LoggedFood?
+    @State private var showingContributionMetric: GoalMetric?
     @State private var draftServingAmount = 1.0
     @State private var draftServingInput = "1"
     @State private var draftServingError: String?
@@ -80,6 +81,14 @@ struct DiaryView: View {
                 }
             }
         }
+        .sheet(item: $showingContributionMetric) { metric in
+            NutrientContributionSheet(
+                metric: metric,
+                entries: store.loggedFoods,
+                consumedTotal: consumedAmount(for: metric),
+                goalTotal: goalAmount(for: metric)
+            )
+        }
     }
 
     private var progressSection: some View {
@@ -89,17 +98,17 @@ struct DiaryView: View {
 
             MacroSummaryView(nutrition: store.todayNutrition)
 
-            progressRow(label: "Calories", current: Double(store.todayNutrition.calories), goal: Double(store.goals.calories))
-            progressRow(label: "Protein", current: store.todayNutrition.protein, goal: store.goals.protein)
-            progressRow(label: "Carbs", current: store.todayNutrition.carbs, goal: store.goals.carbs)
-            progressRow(label: "Fat", current: store.todayNutrition.fat, goal: store.goals.fat)
+            progressRow(metric: .calories, current: Double(store.todayNutrition.calories), goal: Double(store.goals.calories))
+            progressRow(metric: .protein, current: store.todayNutrition.protein, goal: store.goals.protein)
+            progressRow(metric: .carbs, current: store.todayNutrition.carbs, goal: store.goals.carbs)
+            progressRow(metric: .fat, current: store.todayNutrition.fat, goal: store.goals.fat)
 
             Divider()
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Other Nutrition Goals")
                     .font(.subheadline.weight(.semibold))
-                progressRow(label: "Fiber", current: store.todayNutrition.fiber, goal: store.goals.fiber)
+                progressRow(metric: .fiber, current: store.todayNutrition.fiber, goal: store.goals.fiber)
             }
         }
         .padding()
@@ -258,17 +267,169 @@ struct DiaryView: View {
         return result
     }
 
-    private func progressRow(label: String, current: Double, goal: Double) -> some View {
+    private func progressRow(metric: GoalMetric, current: Double, goal: Double) -> some View {
         let progress = min(current / max(goal, 1), 1.0)
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(label)
-                Spacer()
-                Text("\(Int(current.rounded())) / \(Int(goal.rounded()))")
-                    .foregroundStyle(.secondary)
+        return Button {
+            showingContributionMetric = metric
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(metric.title)
+                    Spacer()
+                    Text("\(metric.formatted(current)) / \(metric.formatted(goal))")
+                        .foregroundStyle(.secondary)
+                }
+                ProgressView(value: progress)
+                    .tint(progress >= 1 ? ThistleTheme.primaryGreen : .accentColor)
             }
-            ProgressView(value: progress)
-                .tint(progress >= 1 ? ThistleTheme.primaryGreen : .accentColor)
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .accessibilityLabel("Show \(metric.title) contributors")
+    }
+
+    private func consumedAmount(for metric: GoalMetric) -> Double {
+        switch metric {
+        case .calories: return Double(store.todayNutrition.calories)
+        case .protein: return store.todayNutrition.protein
+        case .carbs: return store.todayNutrition.carbs
+        case .fat: return store.todayNutrition.fat
+        case .fiber: return store.todayNutrition.fiber
+        }
+    }
+
+    private func goalAmount(for metric: GoalMetric) -> Double {
+        switch metric {
+        case .calories: return Double(store.goals.calories)
+        case .protein: return store.goals.protein
+        case .carbs: return store.goals.carbs
+        case .fat: return store.goals.fat
+        case .fiber: return store.goals.fiber
+        }
+    }
+}
+
+private enum GoalMetric: String, Identifiable {
+    case calories
+    case protein
+    case carbs
+    case fat
+    case fiber
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .calories: return "Calories"
+        case .protein: return "Protein"
+        case .carbs: return "Carbs"
+        case .fat: return "Fat"
+        case .fiber: return "Fiber"
+        }
+    }
+
+    func value(in nutrition: NutritionFacts) -> Double {
+        switch self {
+        case .calories: return Double(nutrition.calories)
+        case .protein: return nutrition.protein
+        case .carbs: return nutrition.carbs
+        case .fat: return nutrition.fat
+        case .fiber: return nutrition.fiber
+        }
+    }
+
+    func formatted(_ value: Double) -> String {
+        switch self {
+        case .calories:
+            return Int(value.rounded()).formatted()
+        case .protein, .carbs, .fat, .fiber:
+            return "\(value.formatted(.number.precision(.fractionLength(0...1))))g"
+        }
+    }
+}
+
+private struct NutrientContributionSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let metric: GoalMetric
+    let entries: [LoggedFood]
+    let consumedTotal: Double
+    let goalTotal: Double
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Progress") {
+                    HStack {
+                        Text("Consumed")
+                        Spacer()
+                        Text(metric.formatted(consumedTotal))
+                    }
+                    HStack {
+                        Text("Goal")
+                        Spacer()
+                        Text(metric.formatted(goalTotal))
+                    }
+                    HStack {
+                        Text("Completion")
+                        Spacer()
+                        Text("\((consumedTotal / max(goalTotal, 1) * 100).formatted(.number.precision(.fractionLength(0...1))))%")
+                            .foregroundStyle(consumedTotal >= goalTotal ? ThistleTheme.primaryGreen : .secondary)
+                    }
+                }
+
+                Section("Where It Came From") {
+                    if contributions.isEmpty {
+                        Text("No logged entries are contributing yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(contributions, id: \.entry.id) { row in
+                            HStack(alignment: .top) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(row.entry.title)
+                                        .font(.subheadline.weight(.semibold))
+                                    Text(row.entry.servingText)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text(metric.formatted(row.value))
+                                        .font(.subheadline.weight(.semibold))
+                                    Text("\((row.shareOfConsumed * 100).formatted(.number.precision(.fractionLength(0...1))))% of consumed")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("\(metric.title) Contributors")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+
+    private var contributions: [(entry: LoggedFood, value: Double, shareOfConsumed: Double)] {
+        let rows = entries.map { entry in
+            (entry: entry, value: metric.value(in: entry.nutrition))
+        }
+        .filter { $0.value > 0 }
+        .sorted { lhs, rhs in
+            if lhs.value == rhs.value {
+                return lhs.entry.loggedAt > rhs.entry.loggedAt
+            }
+            return lhs.value > rhs.value
+        }
+
+        let total = max(consumedTotal, 0.0001)
+        return rows.map { row in
+            (entry: row.entry, value: row.value, shareOfConsumed: row.value / total)
         }
     }
 }

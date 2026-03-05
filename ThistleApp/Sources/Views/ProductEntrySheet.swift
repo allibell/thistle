@@ -34,6 +34,8 @@ struct ProductEntrySheet: View {
 
     @State private var isSubmitting = false
     @State private var errorMessage: String?
+    @State private var inferenceMessage: String?
+    @State private var isInferringNutrition = false
     @State private var showScanner = false
     @State private var scannedCode: String?
 
@@ -149,6 +151,29 @@ struct ProductEntrySheet: View {
                     .lineLimit(3...6)
             }
 
+            Section("Inference") {
+                Button {
+                    Task { await inferNutrition() }
+                } label: {
+                    if isInferringNutrition {
+                        Label("Inferring...", systemImage: "sparkles")
+                    } else {
+                        Label("Infer Nutrition", systemImage: "sparkles")
+                    }
+                }
+                .disabled(isInferringNutrition || nutritionInferenceSeedText.isEmpty)
+
+                Text("Uses title and ingredient text to estimate macros when labels are missing.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                if let inferenceMessage, !inferenceMessage.isEmpty {
+                    Text(inferenceMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("Macros (per serving)") {
                 macroField(label: "Calories", shortLabel: "Cal", text: $caloriesText, useDecimalPad: false)
                 macroField(label: "Protein (g)", shortLabel: "P", text: $proteinText, useDecimalPad: true)
@@ -165,6 +190,14 @@ struct ProductEntrySheet: View {
                     .keyboardType(.URL)
             }
         }
+    }
+
+    private var nutritionInferenceSeedText: String {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty {
+            return title
+        }
+        return ingredientsText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     @ViewBuilder
@@ -227,6 +260,41 @@ struct ProductEntrySheet: View {
             imageURLText: imageURLText
         )
         dismiss()
+    }
+
+    private func inferNutrition() async {
+        inferenceMessage = nil
+        isInferringNutrition = true
+        defer { isInferringNutrition = false }
+
+        let titleSeed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ingredientSeed = ingredientsText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !titleSeed.isEmpty || !ingredientSeed.isEmpty else {
+            inferenceMessage = "Add a title or ingredient text first."
+            return
+        }
+
+        guard let estimate = await store.inferNutritionEstimate(title: titleSeed, ingredientsText: ingredientSeed) else {
+            inferenceMessage = "Could not infer nutrition from the provided details."
+            return
+        }
+
+        caloriesText = "\(estimate.nutrition.calories)"
+        proteinText = estimate.nutrition.protein.formatted(.number.precision(.fractionLength(0...2)))
+        carbsText = estimate.nutrition.carbs.formatted(.number.precision(.fractionLength(0...2)))
+        fatText = estimate.nutrition.fat.formatted(.number.precision(.fractionLength(0...2)))
+        fiberText = estimate.nutrition.fiber.formatted(.number.precision(.fractionLength(0...2)))
+
+        let trimmedServing = servingDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedServing.isEmpty || trimmedServing == "1 serving" {
+            servingDescription = estimate.servingDescription
+        }
+
+        if ingredientsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !estimate.ingredients.isEmpty {
+            ingredientsText = estimate.ingredients.joined(separator: ", ")
+        }
+
+        inferenceMessage = estimate.sourceSummary
     }
 
     private func hydrateFromExisting() {

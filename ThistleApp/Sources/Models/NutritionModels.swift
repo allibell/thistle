@@ -448,6 +448,7 @@ struct PersistedAppState: Codable {
     var searchCacheByQuery: [String: CachedProductList]
     var barcodeCache: [String: CachedProductValue]
     var deepSearchCache: [String: CachedProductValue]
+    var favoriteImportJobs: [FavoriteImportJob]
 
     init(
         selectedDiet: DietProfile,
@@ -459,7 +460,8 @@ struct PersistedAppState: Codable {
         usageCounts: [String: Int],
         searchCacheByQuery: [String: CachedProductList] = [:],
         barcodeCache: [String: CachedProductValue] = [:],
-        deepSearchCache: [String: CachedProductValue] = [:]
+        deepSearchCache: [String: CachedProductValue] = [:],
+        favoriteImportJobs: [FavoriteImportJob] = []
     ) {
         self.selectedDiet = selectedDiet
         self.goals = goals
@@ -471,6 +473,7 @@ struct PersistedAppState: Codable {
         self.searchCacheByQuery = searchCacheByQuery
         self.barcodeCache = barcodeCache
         self.deepSearchCache = deepSearchCache
+        self.favoriteImportJobs = favoriteImportJobs
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -484,6 +487,7 @@ struct PersistedAppState: Codable {
         case searchCacheByQuery
         case barcodeCache
         case deepSearchCache
+        case favoriteImportJobs
     }
 
     init(from decoder: Decoder) throws {
@@ -498,6 +502,64 @@ struct PersistedAppState: Codable {
         searchCacheByQuery = try container.decodeIfPresent([String: CachedProductList].self, forKey: .searchCacheByQuery) ?? [:]
         barcodeCache = try container.decodeIfPresent([String: CachedProductValue].self, forKey: .barcodeCache) ?? [:]
         deepSearchCache = try container.decodeIfPresent([String: CachedProductValue].self, forKey: .deepSearchCache) ?? [:]
+        favoriteImportJobs = try container.decodeIfPresent([FavoriteImportJob].self, forKey: .favoriteImportJobs) ?? []
+    }
+}
+
+enum FavoriteImportJobStatus: String, Codable, Hashable {
+    case pending
+    case running
+    case completed
+    case failed
+}
+
+struct FavoriteImportLineResult: Hashable, Codable {
+    var itemName: String
+    var success: Bool
+    var reason: String
+    var canonicalProductKey: String?
+}
+
+struct FavoriteImportRunResult: Hashable, Codable {
+    var attemptedCount: Int
+    var importedCount: Int
+    var failedCount: Int
+    var importedCanonicalProductKeys: [String]
+    var lineResults: [FavoriteImportLineResult]
+    var completedAt: Date
+}
+
+struct FavoriteImportJob: Identifiable, Hashable, Codable {
+    var id: String
+    var sourceLabel: String
+    var payload: String
+    var scheduledAt: Date
+    var createdAt: Date
+    var status: FavoriteImportJobStatus
+    var lastRunAt: Date?
+    var lastResult: FavoriteImportRunResult?
+    var lastError: String?
+
+    init(
+        id: String = UUID().uuidString,
+        sourceLabel: String,
+        payload: String,
+        scheduledAt: Date,
+        createdAt: Date = .now,
+        status: FavoriteImportJobStatus = .pending,
+        lastRunAt: Date? = nil,
+        lastResult: FavoriteImportRunResult? = nil,
+        lastError: String? = nil
+    ) {
+        self.id = id
+        self.sourceLabel = sourceLabel
+        self.payload = payload
+        self.scheduledAt = scheduledAt
+        self.createdAt = createdAt
+        self.status = status
+        self.lastRunAt = lastRunAt
+        self.lastResult = lastResult
+        self.lastError = lastError
     }
 }
 

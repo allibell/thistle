@@ -258,7 +258,8 @@ private struct USDAFood: Decodable {
             calories: Int(amount(named: ["energy", "energy (atwater general factors)"]).rounded()),
             protein: amount(named: ["protein"]),
             carbs: amount(named: ["carbohydrate, by difference"]),
-            fat: amount(named: ["total lipid (fat)"])
+            fat: amount(named: ["total lipid (fat)"]),
+            fiber: amount(named: ["fiber, total dietary", "dietary fiber", "fiber"])
         )
     }
 }
@@ -350,8 +351,11 @@ private struct WebFallbackClient: Sendable {
         let fastQueries = [
             "\"\(query)\" ingredients nutrition facts",
             "\"\(query)\" nutrition facts label",
+            "\"\(query)\" site:wholefoodsmarket.com nutrition",
+            "\"\(query)\" site:amazon.com whole foods nutrition",
             "\"\(query)\" safeway nutrition",
-            "\"\(query)\" instacart nutrition facts"
+            "\"\(query)\" instacart nutrition facts",
+            "\"\(query)\" site:myfooddiary.com nutrition facts"
         ]
 
         for fastQuery in fastQueries {
@@ -363,7 +367,11 @@ private struct WebFallbackClient: Sendable {
                 "\"\(query)\" site:safeway.com nutrition facts",
                 "\"\(query)\" site:safeway.com ingredients",
                 "\"\(query)\" site:instacart.com nutrition facts",
+                "\"\(query)\" site:wholefoodsmarket.com ingredients",
+                "\"\(query)\" site:amazon.com nutrition facts",
                 "\"\(query)\" site:safeway.com product-details",
+                "\"\(query)\" site:myfooddiary.com nutrition",
+                "\"\(query)\" site:myfooddiary.com ingredients",
                 "\"\(query)\" back label ingredients"
             ]
             for slowQuery in slowQueries {
@@ -527,7 +535,8 @@ private struct WebFallbackClient: Sendable {
         let fat = extract(#"(?i)(?:total\s+fat|fat)\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*g"#)
         let carbs = extract(#"(?i)(?:total\s+carbohydrate|carbohydrates|carbs)\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*g"#)
         let protein = extract(#"(?i)protein\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*g"#)
-        return NutritionFacts(calories: calories, protein: protein, carbs: carbs, fat: fat)
+        let fiber = extract(#"(?i)(?:dietary\s+fiber|total\s+fiber|fiber)\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*g"#)
+        return NutritionFacts(calories: calories, protein: protein, carbs: carbs, fat: fat, fiber: fiber)
     }
 
     private func inferBrand(from title: String, query: String) -> String {
@@ -615,6 +624,7 @@ private struct WebFallbackClient: Sendable {
         if value.contains("safeway") { score += 3 }
         if value.contains("safewaycdn") { score += 4 }
         if value.contains("instacart") { score += 2 }
+        if value.contains("myfooddiary") { score += 2 }
         if value.hasSuffix(".jpg") || value.hasSuffix(".jpeg") || value.hasSuffix(".png") || value.hasSuffix(".webp") {
             score += 2
         }

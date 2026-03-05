@@ -22,7 +22,7 @@ struct SearchView: View {
                     recentHistorySection
                 }
 
-                if !store.matchingMeals.isEmpty {
+                if shouldShowCommittedResults, !store.matchingMeals.isEmpty {
                     mealsSection
                 }
 
@@ -50,8 +50,10 @@ struct SearchView: View {
                     debugSection
                 }
 
-                ForEach(store.searchResults) { product in
-                    productSearchCard(for: product)
+                if shouldShowCommittedResults {
+                    ForEach(store.searchResults) { product in
+                        productSearchCard(for: product)
+                    }
                 }
             }
             .padding()
@@ -75,6 +77,8 @@ struct SearchView: View {
         .onChange(of: store.query) { _, newValue in
             if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 store.clearSearch()
+            } else {
+                store.hasSubmittedSearch = false
             }
         }
         .sheet(isPresented: $showingAddProductSheet) {
@@ -120,6 +124,11 @@ struct SearchView: View {
         }
         .padding()
         .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var shouldShowCommittedResults: Bool {
+        let trimmed = store.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || store.hasSubmittedSearch
     }
 
     private var searchActions: some View {

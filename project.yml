@@ -20,6 +20,7 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.allibell.thistle
+        CODE_SIGN_ENTITLEMENTS: ThistleApp/Thistle.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: Thistle
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
@@ -27,5 +28,24 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_NSCameraUsageDescription: Scan barcodes to look up foods in your nutrition library.
+        SWIFT_VERSION: 6.0
+        TARGETED_DEVICE_FAMILY: "1"
+    dependencies:
+      - target: ThistleWidgets
+        embed: true
+
+  ThistleWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: ThistleWidgets/Sources
+      - path: ThistleApp/Sources/Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.allibell.thistle.widgets
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: ThistleWidgets/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ThistleWidgets/ThistleWidgets.entitlements
         SWIFT_VERSION: 6.0
         TARGETED_DEVICE_FAMILY: "1"

@@ -11,6 +11,13 @@ enum AppTab: Hashable {
 
 @MainActor
 final class AppStore: ObservableObject {
+    struct NutritionInferenceEstimate {
+        var nutrition: NutritionFacts
+        var servingDescription: String
+        var ingredients: [String]
+        var sourceSummary: String
+    }
+
     @Published var selectedTab: AppTab = .search
     @Published var selectedDiet: DietProfile = .whole30
     @Published var goals: MacroGoals = .default
@@ -27,11 +34,13 @@ final class AppStore: ObservableObject {
     ]
     @Published var loggedFoods: [LoggedFood] = []
     @Published var usageCounts: [String: Int] = [:]
+    @Published var favoriteImportJobs: [FavoriteImportJob] = []
 
     @Published var selectedStoreFilter = "All Stores"
     @Published var onlyShowCompatible = false
     @Published var hideCautionOrIncomplete = false
     @Published var query = ""
+    @Published private(set) var activeSearchQuery = ""
     @Published var manualBarcode = ""
     @Published var remoteSearchResults: [Product] = []
     @Published var deepSearchResult: Product?
@@ -53,10 +62,12 @@ final class AppStore: ObservableObject {
     private let persistence: AppPersistence
     private let catalogCacheTTL: TimeInterval = 60 * 60 * 24 * 7
     private let deepSearchCacheTTL: TimeInterval = 60 * 60 * 24
+    private let maxWholeFoodsOrderItemsPerRun = 50
     private var cancellables: Set<AnyCancellable> = []
     private var searchCache: [String: CachedProductList] = [:]
     private var barcodeCache: [String: CachedProductValue] = [:]
     private var deepSearchCache: [String: CachedProductValue] = [:]
+    private var didStartFiberBackfill = false
 
     init(
         catalogService: ProductCatalogServing = ProductCatalogService(),
@@ -78,14 +89,21 @@ final class AppStore: ObservableObject {
             searchCache = state.searchCacheByQuery
             barcodeCache = state.barcodeCache
             deepSearchCache = state.deepSearchCache
+            favoriteImportJobs = state.favoriteImportJobs
         }
         pruneExpiredCaches()
+        persistState()
 
         setupPersistence()
+        startFiberBackfillIfNeeded()
+        Task { [weak self] in
+            await self?.runDueFavoriteImportJobs()
+        }
     }
 
     var localCatalog: [Product] {
-        deduplicatedProductsByID(bestProductsByCanonicalKey(SampleData.products + cachedProducts))
+        let normalized = (SampleData.products + cachedProducts).map(withInferredStores)
+        return deduplicatedProductsByID(bestProductsByCanonicalKey(normalized))
     }
 
     var mealBuilderProducts: [Product] {
@@ -106,7 +124,7 @@ final class AppStore: ObservableObject {
     }
 
     var localProductResults: [Product] {
-        let candidates = query.isEmpty ? localCatalog : localCatalog.filter(matchesSearchQuery)
+        let candidates = activeSearchQuery.isEmpty ? localCatalog : localCatalog.filter(matchesSearchQuery)
         return candidates
             .filter(matchesFilters)
             .sorted { combinedRankingScore(for: $0) > combinedRankingScore(for: $1) }
@@ -157,7 +175,7 @@ final class AppStore: ObservableObject {
             return true
         }
 
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedQuery = activeSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else {
             return false
         }
@@ -190,8 +208,8 @@ final class AppStore: ObservableObject {
     }
 
     var matchingMeals: [SavedMeal] {
-        guard !query.isEmpty else { return meals }
-        let normalized = normalizedTerms(for: query)
+        guard !activeSearchQuery.isEmpty else { return meals }
+        let normalized = normalizedTerms(for: activeSearchQuery)
         return meals.filter { meal in
             let haystack = "\(meal.name) \(meal.components.map(\.product.name).joined(separator: " "))".lowercased()
             return normalized.allSatisfy(haystack.contains)
@@ -204,6 +222,7 @@ final class AppStore: ObservableObject {
 
     func performSearch() async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        activeSearchQuery = trimmed
         hasSubmittedSearch = true
         searchError = nil
         deepSearchResult = nil
@@ -219,8 +238,9 @@ final class AppStore: ObservableObject {
         do {
             let cacheKey = normalizedSearchKey(for: trimmed)
             if let cached = searchCache[cacheKey], isFresh(cached.cachedAt, ttl: catalogCacheTTL) {
-                remoteSearchResults = cached.products
-                mergeIntoCache(cached.products)
+                let normalizedCachedProducts = cached.products.map(withInferredStores)
+                remoteSearchResults = normalizedCachedProducts
+                mergeIntoCache(normalizedCachedProducts)
                 if cached.products.isEmpty, localProductResults.isEmpty, matchingMeals.isEmpty {
                     searchError = "No matching foods found in your local library or the online catalog."
                 }
@@ -229,20 +249,22 @@ final class AppStore: ObservableObject {
 
             if let stale = searchCache[cacheKey], !stale.products.isEmpty {
                 // Show stale results immediately, then refresh from network.
-                remoteSearchResults = stale.products
-                mergeIntoCache(stale.products)
+                let normalizedStaleProducts = stale.products.map(withInferredStores)
+                remoteSearchResults = normalizedStaleProducts
+                mergeIntoCache(normalizedStaleProducts)
             }
 
             let products = try await catalogService.searchProducts(matching: trimmed)
+            let normalizedProducts = products.map(withInferredStores)
             if !products.isEmpty {
-                searchCache[cacheKey] = CachedProductList(products: products, cachedAt: .now)
+                searchCache[cacheKey] = CachedProductList(products: normalizedProducts, cachedAt: .now)
                 persistState()
             } else {
                 searchCache[cacheKey] = nil
             }
 
-            remoteSearchResults = products
-            mergeIntoCache(products)
+            remoteSearchResults = normalizedProducts
+            mergeIntoCache(normalizedProducts)
             if products.isEmpty, localProductResults.isEmpty, matchingMeals.isEmpty {
                 searchError = "No matching foods found in your local library or the online catalog."
             }
@@ -258,6 +280,7 @@ final class AppStore: ObservableObject {
     func runManualDeepSearchForCurrentQuery() async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        activeSearchQuery = trimmed
         await runDeepSearch(for: trimmed)
     }
 
@@ -278,7 +301,7 @@ final class AppStore: ObservableObject {
         if let cachedVariant = variants.first(where: { barcodeCache.keys.contains($0) }),
            let cached = barcodeCache[cachedVariant] {
             if isFresh(cached.cachedAt, ttl: catalogCacheTTL) {
-                barcodeLookupResult = cached.product
+                barcodeLookupResult = cached.product.map(withInferredStores)
                 if cached.product == nil {
                     barcodeLookupError = "No product found for barcode \(trimmed)."
                 }
@@ -293,13 +316,14 @@ final class AppStore: ObservableObject {
 
         do {
             let fetched = try await catalogService.product(forBarcode: trimmed)
+            let normalizedFetched = fetched.map(withInferredStores)
             for variant in variants {
-                barcodeCache[variant] = CachedProductValue(product: fetched, cachedAt: .now)
+                barcodeCache[variant] = CachedProductValue(product: normalizedFetched, cachedAt: .now)
             }
             persistState()
-            if let fetched {
-                mergeIntoCache([fetched])
-                barcodeLookupResult = fetched
+            if let normalizedFetched {
+                mergeIntoCache([normalizedFetched])
+                barcodeLookupResult = normalizedFetched
             } else {
                 barcodeLookupError = "No product found for barcode \(trimmed)."
             }
@@ -319,6 +343,7 @@ final class AppStore: ObservableObject {
 
     func clearSearch() {
         query = ""
+        activeSearchQuery = ""
         remoteSearchResults = []
         deepSearchResult = nil
         searchError = nil
@@ -571,14 +596,8 @@ final class AppStore: ObservableObject {
         let trimmedBrand = brand.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedServing = servingDescription.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let ingredients = ingredientsText
-            .split(whereSeparator: { $0 == "," || $0 == ";" || $0 == "\n" })
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        let stores = storesText
-            .split(whereSeparator: { $0 == "," || $0 == ";" || $0 == "\n" })
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        let ingredients = parseDelimitedValues(ingredientsText)
+        let stores = parseDelimitedValues(storesText)
         let imageURL = URL(string: imageURLText.trimmingCharacters(in: .whitespacesAndNewlines))
 
         let manualProduct = Product(
@@ -614,6 +633,38 @@ final class AppStore: ObservableObject {
         return manualProduct
     }
 
+    func inferNutritionEstimate(title: String, ingredientsText: String) async -> NutritionInferenceEstimate? {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsedIngredients = parseDelimitedValues(ingredientsText)
+        let query = nutritionInferenceQuery(title: trimmedTitle, ingredients: parsedIngredients)
+        guard !query.isEmpty else { return nil }
+
+        if let deepSearchMatch = try? await deepSearchService.deepSearchProduct(matching: query),
+           deepSearchMatch.hasMeaningfulNutrition {
+            return NutritionInferenceEstimate(
+                nutrition: deepSearchMatch.nutrition,
+                servingDescription: deepSearchMatch.servingDescription,
+                ingredients: deepSearchMatch.ingredients.isEmpty ? parsedIngredients : deepSearchMatch.ingredients,
+                sourceSummary: "Estimated from online nutrition sources."
+            )
+        }
+
+        if let localMatch = localNutritionInferenceCandidate(title: trimmedTitle, ingredients: parsedIngredients) {
+            return NutritionInferenceEstimate(
+                nutrition: localMatch.nutrition,
+                servingDescription: localMatch.servingDescription,
+                ingredients: localMatch.ingredients.isEmpty ? parsedIngredients : localMatch.ingredients,
+                sourceSummary: "Estimated from a similar food already in your local catalog."
+            )
+        }
+
+        if let heuristicEstimate = heuristicNutritionEstimate(for: query) {
+            return heuristicEstimate
+        }
+
+        return nil
+    }
+
     @discardableResult
     func addProductFromLink(_ link: String, fallbackQuery: String? = nil) async throws -> Product? {
         let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -632,6 +683,49 @@ final class AppStore: ObservableObject {
         }
 
         return nil
+    }
+
+    @discardableResult
+    func enqueueWholeFoodsOrderImport(_ orderText: String, scheduledAt: Date = .now) -> FavoriteImportJob? {
+        let trimmed = orderText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let job = FavoriteImportJob(
+            sourceLabel: "whole-foods-order",
+            payload: trimmed,
+            scheduledAt: scheduledAt,
+            status: .pending
+        )
+        favoriteImportJobs.insert(job, at: 0)
+        return job
+    }
+
+    @discardableResult
+    func importWholeFoodsOrderToFavorites(_ orderText: String) async -> FavoriteImportRunResult {
+        await importWholeFoodsOrderFavorites(payload: orderText)
+    }
+
+    func runDueFavoriteImportJobs() async {
+        guard !favoriteImportJobs.isEmpty else { return }
+        let now = Date.now
+        let dueJobIDs = favoriteImportJobs
+            .filter { $0.status == .pending && $0.scheduledAt <= now }
+            .map(\.id)
+
+        for jobID in dueJobIDs {
+            guard let index = favoriteImportJobs.firstIndex(where: { $0.id == jobID }) else { continue }
+            favoriteImportJobs[index].status = .running
+            favoriteImportJobs[index].lastRunAt = .now
+            favoriteImportJobs[index].lastError = nil
+
+            let payload = favoriteImportJobs[index].payload
+            let result = await importWholeFoodsOrderFavorites(payload: payload)
+            favoriteImportJobs[index].lastResult = result
+            favoriteImportJobs[index].status = result.failedCount == result.attemptedCount ? .failed : .completed
+            if result.failedCount == result.attemptedCount {
+                favoriteImportJobs[index].lastError = "No order lines could be imported."
+            }
+        }
     }
 
     func log(product: Product, servings: Double = 1) {
@@ -661,11 +755,11 @@ final class AppStore: ObservableObject {
         loggedFoods.insert(
             LoggedFood(
                 title: meal.name,
-                servingText: "Custom meal",
+                servingText: "1 x meal serving",
                 sourceProductIDs: meal.components.map(\.product.id),
                 sourceProductID: nil,
-                loggedServings: nil,
-                baseServingDescription: nil,
+                loggedServings: 1,
+                baseServingDescription: "meal serving",
                 nutrition: meal.nutrition,
                 analysis: analysis(for: meal),
                 loggedAt: .now
@@ -678,6 +772,64 @@ final class AppStore: ObservableObject {
         }
     }
 
+    private func importWholeFoodsOrderFavorites(payload: String) async -> FavoriteImportRunResult {
+        let parsedItems = parseWholeFoodsOrderItems(from: payload, maxItems: maxWholeFoodsOrderItemsPerRun)
+        guard !parsedItems.isEmpty else {
+            return FavoriteImportRunResult(
+                attemptedCount: 0,
+                importedCount: 0,
+                failedCount: 0,
+                importedCanonicalProductKeys: [],
+                lineResults: [],
+                completedAt: .now
+            )
+        }
+
+        var lineResults: [FavoriteImportLineResult] = []
+        var importedKeys: [String] = []
+
+        for item in parsedItems {
+            if Task.isCancelled { break }
+            guard let resolved = await resolveWholeFoodsProduct(for: item.name) else {
+                lineResults.append(
+                    FavoriteImportLineResult(
+                        itemName: item.name,
+                        success: false,
+                        reason: "No matching product found from catalog/deep search.",
+                        canonicalProductKey: nil
+                    )
+                )
+                continue
+            }
+
+            mergeIntoCache([resolved])
+            let key = resolved.canonicalLookupKey
+            favoriteProductKeys.insert(key)
+            importedKeys.append(key)
+
+            lineResults.append(
+                FavoriteImportLineResult(
+                    itemName: item.name,
+                    success: true,
+                    reason: "Imported and added to favorites.",
+                    canonicalProductKey: key
+                )
+            )
+        }
+
+        let importedSet = Array(Set(importedKeys)).sorted()
+        let importedCount = lineResults.filter(\.success).count
+        let attemptedCount = lineResults.count
+        return FavoriteImportRunResult(
+            attemptedCount: attemptedCount,
+            importedCount: importedCount,
+            failedCount: max(0, attemptedCount - importedCount),
+            importedCanonicalProductKeys: importedSet,
+            lineResults: lineResults,
+            completedAt: .now
+        )
+    }
+
     func deleteLoggedFood(entryID: String) {
         loggedFoods.removeAll { $0.id == entryID }
     }
@@ -688,6 +840,14 @@ final class AppStore: ObservableObject {
 
         var entry = loggedFoods[index]
         if entry.sourceProductID == nil, entry.sourceProductIDs.count > 1 {
+            let previousServings = max(entry.loggedServings ?? 1, 0.1)
+            let scaleFactor = servings / previousServings
+            entry.loggedServings = servings
+            entry.baseServingDescription = entry.baseServingDescription ?? "meal serving"
+            let roundedAmount = servings.formatted(.number.precision(.fractionLength(0...2)))
+            entry.servingText = "\(roundedAmount) x \(entry.baseServingDescription ?? "meal serving")"
+            entry.nutrition = entry.nutrition * scaleFactor
+            loggedFoods[index] = entry
             return
         }
         let effectiveProductID = entry.sourceProductID ?? entry.sourceProductIDs.first
@@ -758,6 +918,121 @@ final class AppStore: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private func parseDelimitedValues(_ text: String) -> [String] {
+        text
+            .split(whereSeparator: { $0 == "," || $0 == ";" || $0 == "\n" })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private func nutritionInferenceQuery(title: String, ingredients: [String]) -> String {
+        var components: [String] = []
+        if !title.isEmpty {
+            components.append(title)
+        }
+        if !ingredients.isEmpty {
+            components.append("ingredients \(ingredients.prefix(8).joined(separator: ", "))")
+        }
+        if components.isEmpty {
+            return ""
+        }
+        components.append("nutrition facts")
+        return components.joined(separator: " ")
+    }
+
+    private func localNutritionInferenceCandidate(title: String, ingredients: [String]) -> Product? {
+        let normalizedTitle = normalizedComparableText(title)
+        let titleTerms = Set(normalizedTerms(for: title))
+        let ingredientTerms = Set(ingredients.flatMap { normalizedTerms(for: $0) })
+        let combinedTerms = titleTerms.union(ingredientTerms)
+        guard !combinedTerms.isEmpty else { return nil }
+
+        let rankedCandidates = localCatalog
+            .filter(\.hasMeaningfulNutrition)
+            .compactMap { product -> (product: Product, score: Int)? in
+                let identityTerms = Set(normalizedTerms(for: "\(product.brand) \(product.name)"))
+                let productIngredientTerms = Set(normalizedTerms(for: product.ingredients.joined(separator: " ")))
+                let allProductTerms = identityTerms.union(productIngredientTerms)
+                let overlap = combinedTerms.intersection(allProductTerms).count
+                guard overlap > 0 else { return nil }
+
+                var score = overlap * 18
+                score += titleTerms.intersection(identityTerms).count * 24
+                score += ingredientTerms.intersection(productIngredientTerms).count * 10
+                score += product.dataCompletenessScore * 3
+
+                if !normalizedTitle.isEmpty,
+                   normalizedComparableText(product.name).contains(normalizedTitle) {
+                    score += 30
+                }
+                return (product: product, score: score)
+            }
+            .sorted { lhs, rhs in
+                if lhs.score == rhs.score {
+                    return lhs.product.lastUpdatedAt > rhs.product.lastUpdatedAt
+                }
+                return lhs.score > rhs.score
+            }
+
+        guard let top = rankedCandidates.first, top.score >= 35 else {
+            return nil
+        }
+        return top.product
+    }
+
+    private func heuristicNutritionEstimate(for query: String) -> NutritionInferenceEstimate? {
+        let normalized = normalizedComparableText(query)
+        let estimate: (nutrition: NutritionFacts, serving: String, ingredients: [String])?
+
+        if normalized.contains("pizza") {
+            estimate = (
+                nutrition: NutritionFacts(calories: 285, protein: 12, carbs: 36, fat: 10, fiber: 2),
+                serving: "1 slice",
+                ingredients: ["Wheat flour", "Tomato", "Mozzarella"]
+            )
+        } else if normalized.contains("burger") {
+            estimate = (
+                nutrition: NutritionFacts(calories: 354, protein: 17, carbs: 29, fat: 17, fiber: 1),
+                serving: "1 burger",
+                ingredients: ["Beef", "Bun", "Oil"]
+            )
+        } else if normalized.contains("salad") {
+            estimate = (
+                nutrition: NutritionFacts(calories: 120, protein: 4, carbs: 10, fat: 7, fiber: 3),
+                serving: "1 bowl",
+                ingredients: ["Leafy greens", "Vegetables", "Dressing"]
+            )
+        } else if normalized.contains("oatmeal") {
+            estimate = (
+                nutrition: NutritionFacts(calories: 150, protein: 5, carbs: 27, fat: 3, fiber: 4),
+                serving: "1 cup",
+                ingredients: ["Oats", "Water"]
+            )
+        } else if normalized.contains("chicken") && normalized.contains("breast") {
+            estimate = (
+                nutrition: NutritionFacts(calories: 165, protein: 31, carbs: 0, fat: 4, fiber: 0),
+                serving: "1 cooked breast",
+                ingredients: ["Chicken breast"]
+            )
+        } else if normalized.contains("rice") {
+            estimate = (
+                nutrition: NutritionFacts(calories: 205, protein: 4, carbs: 45, fat: 0.4, fiber: 1),
+                serving: "1 cup cooked",
+                ingredients: ["Rice"]
+            )
+        } else {
+            estimate = nil
+        }
+
+        guard let estimate else { return nil }
+        return NutritionInferenceEstimate(
+            nutrition: estimate.nutrition,
+            servingDescription: estimate.serving,
+            ingredients: estimate.ingredients,
+            sourceSummary: "Estimated from a built-in nutrition heuristic."
+        )
+    }
+
     private func storeAliases(for normalizedStore: String) -> [String] {
         switch normalizedStore {
         case "whole foods", "whole foods market":
@@ -772,7 +1047,7 @@ final class AppStore: ObservableObject {
     }
 
     private func matchesSearchQuery(_ product: Product) -> Bool {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = activeSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return true }
 
         let queryTerms = normalizedTerms(for: trimmed)
@@ -851,21 +1126,38 @@ final class AppStore: ObservableObject {
         }
 
         let queryBoost: Int
-        if query.isEmpty {
+        if activeSearchQuery.isEmpty {
             queryBoost = 0
         } else {
-            let normalizedName = product.name.lowercased()
-            let normalizedBrand = product.brand.lowercased()
-            let trimmed = query.lowercased()
+            let normalizedName = normalizedComparableText(product.name)
+            let normalizedBrand = normalizedComparableText(product.brand)
+            let trimmed = normalizedComparableText(activeSearchQuery)
             if normalizedName == trimmed || normalizedBrand == trimmed {
                 queryBoost = 50
             } else if normalizedName.contains(trimmed) || normalizedBrand.contains(trimmed) {
                 queryBoost = 35
             } else {
-                let hits = normalizedTerms(for: query).reduce(into: 0) { partial, term in
-                    if normalizedName.contains(term) { partial += 10 }
-                    if normalizedBrand.contains(term) { partial += 6 }
-                    if product.ingredients.joined(separator: " ").lowercased().contains(term) { partial += 3 }
+                let nameTerms = Set(normalizedTerms(for: normalizedName))
+                let brandTerms = Set(normalizedTerms(for: normalizedBrand))
+                let ingredientTerms = Set(normalizedTerms(for: normalizedComparableText(product.ingredients.joined(separator: " "))))
+                let hits = normalizedTerms(for: activeSearchQuery).reduce(into: 0) { partial, term in
+                    if nameTerms.contains(term) {
+                        partial += 10
+                    } else if nameTerms.contains(where: { isFuzzyTokenMatch(query: term, candidate: $0) }) {
+                        partial += 7
+                    }
+
+                    if brandTerms.contains(term) {
+                        partial += 6
+                    } else if brandTerms.contains(where: { isFuzzyTokenMatch(query: term, candidate: $0) }) {
+                        partial += 5
+                    }
+
+                    if ingredientTerms.contains(term) {
+                        partial += 3
+                    } else if ingredientTerms.contains(where: { isFuzzyTokenMatch(query: term, candidate: $0) }) {
+                        partial += 2
+                    }
                 }
                 queryBoost = hits
             }
@@ -894,7 +1186,9 @@ final class AppStore: ObservableObject {
 
     private func mergeIntoCache(_ products: [Product]) {
         guard !products.isEmpty else { return }
-        let merged = bestProductsByCanonicalKey(products + cachedProducts)
+        let normalizedProducts = products.map(withInferredStores)
+        let normalizedCachedProducts = cachedProducts.map(withInferredStores)
+        let merged = bestProductsByCanonicalKey(normalizedProducts + normalizedCachedProducts)
         cachedProducts = merged.sorted { $0.lastUpdatedAt > $1.lastUpdatedAt }
     }
 
@@ -1161,7 +1455,7 @@ final class AppStore: ObservableObject {
                     label: "Macros",
                     oldValue: summarizeNutrition(original.nutrition),
                     newValue: summarizeNutrition(updated.nutrition),
-                    addsMissingData: !original.hasMeaningfulNutrition && updated.hasMeaningfulNutrition
+                    addsMissingData: nutritionAddsMissingData(original: original.nutrition, updated: updated.nutrition)
                 )
             )
         }
@@ -1306,6 +1600,21 @@ final class AppStore: ObservableObject {
         return (-35, "Macros drift too far from the existing entry.")
     }
 
+    private func nutritionAddsMissingData(original: NutritionFacts, updated: NutritionFacts) -> Bool {
+        let originalHasMacros = original.calories > 0 || original.protein > 0 || original.carbs > 0 || original.fat > 0 || original.fiber > 0
+        let updatedHasMacros = updated.calories > 0 || updated.protein > 0 || updated.carbs > 0 || updated.fat > 0 || updated.fiber > 0
+        if !originalHasMacros && updatedHasMacros {
+            return true
+        }
+
+        // Even if core macros already exist, filling missing fiber is still useful missing data.
+        if original.fiber <= 0.01, updated.fiber > 0.01 {
+            return true
+        }
+
+        return false
+    }
+
     private func normalizedComparableText(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
@@ -1351,6 +1660,9 @@ final class AppStore: ObservableObject {
         $favoriteProductKeys
             .sink { [weak self] _ in self?.persistState() }
             .store(in: &cancellables)
+        $favoriteImportJobs
+            .sink { [weak self] _ in self?.persistState() }
+            .store(in: &cancellables)
     }
 
     private func persistState() {
@@ -1366,7 +1678,8 @@ final class AppStore: ObservableObject {
                 usageCounts: usageCounts,
                 searchCacheByQuery: searchCache,
                 barcodeCache: barcodeCache,
-                deepSearchCache: deepSearchCache
+                deepSearchCache: deepSearchCache,
+                favoriteImportJobs: favoriteImportJobs
             )
         )
     }
@@ -1390,6 +1703,254 @@ final class AppStore: ObservableObject {
         deepSearchDebugLog.append("[\(timestamp)] \(message)")
     }
 
+    private func startFiberBackfillIfNeeded() {
+        guard !didStartFiberBackfill else { return }
+        didStartFiberBackfill = true
+        Task { [weak self] in
+            await self?.backfillMissingFiberNutrition()
+        }
+    }
+
+    private func backfillMissingFiberNutrition() async {
+        let candidates = deduplicatedProductsByID(bestProductsByCanonicalKey(cachedProducts))
+            .filter { product in
+                product.nutrition.fiber <= 0.01
+                    && (product.hasMeaningfulNutrition || !product.barcode.isEmpty)
+                    && (product.source == .openFoodFacts || product.source == .upcItemDB || product.source == .deepSearch || product.source == .manual)
+            }
+            .prefix(30)
+
+        guard !candidates.isEmpty else { return }
+
+        var updates: [Product] = []
+        for product in candidates {
+            if Task.isCancelled { break }
+
+            if let enriched = await backfilledFiberCandidate(for: product) {
+                var merged = product
+                merged.nutrition.fiber = enriched.nutrition.fiber
+                merged.lastUpdatedAt = .now
+                updates.append(merged)
+            }
+        }
+
+        guard !updates.isEmpty else { return }
+        mergeIntoCache(updates)
+
+        if let deepSearchResult,
+           let replacement = updates.first(where: { isSameProductIdentity(lhs: deepSearchResult, rhs: $0) }) {
+            self.deepSearchResult = replacement
+        }
+        if let barcodeLookupResult,
+           let replacement = updates.first(where: { isSameProductIdentity(lhs: barcodeLookupResult, rhs: $0) }) {
+            self.barcodeLookupResult = replacement
+        }
+    }
+
+    private func backfilledFiberCandidate(for product: Product) async -> Product? {
+        let barcode = BarcodeNormalizer.digitsOnly(from: product.barcode)
+        if !barcode.isEmpty,
+           let fetched = try? await catalogService.product(forBarcode: barcode),
+           fetched.nutrition.fiber > 0.01 {
+            return withInferredStores(fetched)
+        }
+
+        let query = "\(product.brand) \(product.name)"
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query.count >= 2 else { return nil }
+
+        guard let matches = try? await catalogService.searchProducts(matching: query) else { return nil }
+        let best = matches.first { candidate in
+            candidate.nutrition.fiber > 0.01
+                && (candidate.canonicalLookupKey == product.canonicalLookupKey
+                    || normalizedComparableText(candidate.name) == normalizedComparableText(product.name))
+        }
+        return best.map(withInferredStores)
+    }
+
+    private func parseWholeFoodsOrderItems(from payload: String, maxItems: Int) -> [ParsedOrderItem] {
+        let lines = payload.components(separatedBy: .newlines)
+        var seenNames: Set<String> = []
+        var parsed: [ParsedOrderItem] = []
+
+        for rawLine in lines {
+            let normalizedLine = rawLine
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            guard !normalizedLine.isEmpty else { continue }
+            let lowercase = normalizedLine.lowercased()
+            if shouldIgnoreOrderLine(lowercase) { continue }
+
+            var name = normalizedLine
+            name = name.replacingOccurrences(of: #"(?i)^\s*(qty|quantity)\s*[:\-]?\s*\d+\s*"#, with: "", options: .regularExpression)
+            name = name.replacingOccurrences(of: #"(?i)^\s*\d+\s*(x|×)\s*"#, with: "", options: .regularExpression)
+            name = name.replacingOccurrences(of: #"(?i)\s+qty\s*[:\-]?\s*\d+\s*$"#, with: "", options: .regularExpression)
+            name = name.replacingOccurrences(of: #"\$+\s*\d+(?:\.\d{1,2})?\s*$"#, with: "", options: .regularExpression)
+            name = name.replacingOccurrences(of: #"(?i)\s+\((substitute|replacement).*\)\s*$"#, with: "", options: .regularExpression)
+            name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard name.count >= 3 else { continue }
+            let normalizedName = normalizedTerms(for: name).joined(separator: " ")
+            guard normalizedName.count >= 3, seenNames.insert(normalizedName).inserted else { continue }
+
+            parsed.append(ParsedOrderItem(name: name))
+            if parsed.count >= maxItems { break }
+        }
+
+        return parsed
+    }
+
+    private func shouldIgnoreOrderLine(_ line: String) -> Bool {
+        let ignoredKeywords = [
+            "subtotal",
+            "estimated total",
+            "order total",
+            "tip",
+            "tax",
+            "delivery",
+            "service fee",
+            "order #",
+            "replacement preference",
+            "arriving",
+            "order placed",
+            "item total",
+            "payment",
+            "refund",
+            "coupon",
+            "prime"
+        ]
+        if ignoredKeywords.contains(where: line.contains) {
+            return true
+        }
+        if line.range(of: #"^\$?\d+(?:\.\d{1,2})?$"#, options: .regularExpression) != nil {
+            return true
+        }
+        return false
+    }
+
+    private func resolveWholeFoodsProduct(for itemName: String) async -> Product? {
+        if let local = bestLocalMatch(forOrderItem: itemName) {
+            if local.hasMeaningfulNutrition {
+                return withInferredStores(local)
+            }
+            if let enriched = try? await deepSearchService.deepSearchProduct(for: local, scope: .all), enriched.hasMeaningfulNutrition {
+                return withInferredStores(merge(product: local, with: enriched, scope: .all))
+            }
+            return withInferredStores(local)
+        }
+
+        let wholeFoodsQuery = "\(itemName) whole foods"
+        async let catalogMatches = try? catalogService.searchProducts(matching: wholeFoodsQuery)
+        async let deepSearchMatch = try? deepSearchService.deepSearchProduct(matching: wholeFoodsQuery)
+        let wholeFoodsURL = URL(string: "https://www.wholefoodsmarket.com/search?text=\(wholeFoodsQuery.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")")
+        let myFoodDiaryURL = URL(string: "https://www.myfooddiary.com/search?q=\(itemName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")")
+        async let wholeFoodsURLMatch: Product? = {
+            guard let wholeFoodsURL else { return nil }
+            return try? await deepSearchService.deepSearchProduct(from: wholeFoodsURL)
+        }()
+        async let myFoodDiaryMatch: Product? = {
+            guard let myFoodDiaryURL else { return nil }
+            return try? await deepSearchService.deepSearchProduct(from: myFoodDiaryURL)
+        }()
+
+        let candidates = (await catalogMatches ?? []) + [await deepSearchMatch, await wholeFoodsURLMatch, await myFoodDiaryMatch].compactMap { $0 }
+        guard let selected = bestImportCandidate(from: candidates, orderItemName: itemName) else {
+            return nil
+        }
+
+        if selected.hasMeaningfulNutrition {
+            return withInferredStores(selected)
+        }
+
+        if let enriched = try? await deepSearchService.deepSearchProduct(for: selected, scope: .macros), enriched.hasMeaningfulNutrition {
+            return withInferredStores(merge(product: selected, with: enriched, scope: .all))
+        }
+
+        return withInferredStores(selected)
+    }
+
+    private func bestLocalMatch(forOrderItem itemName: String) -> Product? {
+        let itemTerms = Set(normalizedTerms(for: itemName))
+        guard !itemTerms.isEmpty else { return nil }
+
+        let ranked = localCatalog.compactMap { product -> (Product, Int)? in
+            let haystack = "\(product.brand) \(product.name)"
+            let productTerms = Set(normalizedTerms(for: haystack))
+            guard !productTerms.isEmpty else { return nil }
+            let overlap = itemTerms.intersection(productTerms).count
+            guard overlap > 0 else { return nil }
+            var score = overlap * 25
+            if product.stores.contains(where: { normalizeStoreName($0).contains("whole foods") || normalizeStoreName($0).contains("wholefoods") }) {
+                score += 20
+            }
+            if product.hasMeaningfulNutrition { score += 20 }
+            score += product.dataCompletenessScore * 2
+            return (product, score)
+        }
+        .sorted { lhs, rhs in
+            if lhs.1 == rhs.1 { return lhs.0.lastUpdatedAt > rhs.0.lastUpdatedAt }
+            return lhs.1 > rhs.1
+        }
+        return ranked.first?.0
+    }
+
+    private func bestImportCandidate(from candidates: [Product], orderItemName: String) -> Product? {
+        let itemTerms = Set(normalizedTerms(for: orderItemName))
+        return candidates.max { lhs, rhs in
+            importCandidateScore(lhs, itemTerms: itemTerms) < importCandidateScore(rhs, itemTerms: itemTerms)
+        }
+    }
+
+    private func importCandidateScore(_ candidate: Product, itemTerms: Set<String>) -> Int {
+        let text = "\(candidate.brand) \(candidate.name) \(candidate.stores.joined(separator: " "))".lowercased()
+        let terms = Set(normalizedTerms(for: text))
+        let overlap = itemTerms.intersection(terms).count
+
+        var score = overlap * 20
+        if candidate.stores.contains(where: { normalizeStoreName($0).contains("whole foods") || normalizeStoreName($0).contains("wholefoods") }) {
+            score += 50
+        }
+        if text.contains("365 by whole foods") || text.contains("whole foods") {
+            score += 35
+        }
+        if candidate.hasMeaningfulNutrition {
+            score += 30
+        }
+        if candidate.hasIngredientDetails {
+            score += 15
+        }
+        score += candidate.dataCompletenessScore * 5
+        return score
+    }
+
+    private func withInferredStores(_ product: Product) -> Product {
+        var normalized = product
+        let inferred = inferredStoresFromBrandAndName(brand: product.brand, name: product.name)
+        guard !inferred.isEmpty else { return normalized }
+        normalized.stores = Array(Set(normalized.stores + inferred)).sorted()
+        return normalized
+    }
+
+    private func inferredStoresFromBrandAndName(brand: String, name: String) -> [String] {
+        let value = "\(brand) \(name)".lowercased()
+        var stores: [String] = []
+
+        if value.contains("trader joe") || value.contains("tj's") || value.contains("tjs") {
+            stores.append("Trader Joe's")
+        }
+        if value.contains("whole foods") || value.contains("365 by whole foods") || value.contains("365 organic") {
+            stores.append("Whole Foods")
+        }
+        if value.contains("kirkland") {
+            stores.append("Costco")
+        }
+        if value.contains("good & gather") || value.contains("market pantry") {
+            stores.append("Target")
+        }
+
+        return Array(Set(stores)).sorted()
+    }
+
     private func roundedNumericText(in text: String) -> String {
         let pattern = #"\d+(?:\.\d+)?"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
@@ -1408,4 +1969,8 @@ final class AppStore: ObservableObject {
         }
         return result
     }
+}
+
+private struct ParsedOrderItem {
+    var name: String
 }
