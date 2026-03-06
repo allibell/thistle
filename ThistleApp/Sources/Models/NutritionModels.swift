@@ -63,7 +63,7 @@ enum IngredientFlagSeverity: String, Codable {
     }
 }
 
-struct NutritionFacts: Codable, Hashable {
+struct NutritionFacts: Codable, Hashable, Sendable {
     var calories: Int
     var protein: Double
     var carbs: Double
@@ -272,7 +272,7 @@ struct ProductAnalysis: Hashable, Codable {
     var flags: [IngredientFlag]
 }
 
-struct Product: Identifiable, Hashable, Codable {
+struct Product: Identifiable, Hashable, Codable, Sendable {
     var id: String
     var source: ProductSource
     var name: String

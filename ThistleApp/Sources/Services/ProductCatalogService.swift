@@ -27,47 +27,53 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
             throw CatalogError.invalidQuery
         }
 
-        let localCandidates = await localIndex.searchProducts(matching: trimmed, limit: 16)
-        var aggregate: [Product] = localCandidates
-        let variants = queryVariants(for: trimmed)
-        let maxVariantCount: Int = {
-            if localCandidates.count >= 10 { return 1 }
-            if localCandidates.count >= 6 { return 2 }
-            return min(3, variants.count)
-        }()
-        var encounteredNetworkError = false
-        var consecutiveTimeouts = 0
+        let variants = Array(queryVariants(for: trimmed).prefix(2))
+        let aggregate = await parallelFetchOpenFoodFacts(variants: variants, maxProducts: 24)
 
-        for variant in variants.prefix(maxVariantCount) {
-            let fetched: [Product]
-            do {
-                fetched = try await openFoodFacts.searchProducts(matching: variant)
-                consecutiveTimeouts = 0
-            } catch {
-                encounteredNetworkError = true
-                if let urlError = error as? URLError, urlError.code == .timedOut {
-                    consecutiveTimeouts += 1
-                    if aggregate.count >= 6 || consecutiveTimeouts >= 2 {
+        if aggregate.products.isEmpty, aggregate.encounteredNetworkError {
+            // Fail soft: avoid surfacing hard search failures to UI for transient catalog/API issues.
+            return []
+        }
+
+        let deduped = deduplicate(aggregate.products)
+        let sorted = deduped.sorted { rankingScore(for: $0, query: trimmed) > rankingScore(for: $1, query: trimmed) }
+        let indexProducts = Array(sorted.prefix(28))
+        Task(priority: .utility) { [localIndex] in
+            await localIndex.upsert(products: indexProducts)
+        }
+        return sorted
+    }
+
+    private func parallelFetchOpenFoodFacts(variants: [String], maxProducts: Int) async -> (products: [Product], encounteredNetworkError: Bool) {
+        guard !variants.isEmpty else { return ([], false) }
+
+        return await withTaskGroup(of: VariantFetchResult.self) { group in
+            for variant in variants {
+                group.addTask {
+                    do {
+                        let products = try await openFoodFacts.searchProducts(matching: variant)
+                        return VariantFetchResult(products: products, encounteredNetworkError: false)
+                    } catch {
+                        return VariantFetchResult(products: [], encounteredNetworkError: true)
+                    }
+                }
+            }
+
+            var aggregate: [Product] = []
+            var encounteredNetworkError = false
+            for await result in group {
+                encounteredNetworkError = encounteredNetworkError || result.encounteredNetworkError
+                if !result.products.isEmpty {
+                    aggregate += result.products
+                    if aggregate.count >= maxProducts {
+                        group.cancelAll()
                         break
                     }
                 }
-                continue
             }
-            if !fetched.isEmpty {
-                aggregate += fetched
-            }
-            if aggregate.count >= 24 { break }
-        }
 
-        if aggregate.isEmpty, encounteredNetworkError {
-            // Fail soft: avoid surfacing hard search failures to UI for transient catalog/API issues.
-            return localCandidates
+            return (Array(aggregate.prefix(maxProducts)), encounteredNetworkError)
         }
-
-        let deduped = deduplicate(aggregate)
-        let sorted = deduped.sorted { rankingScore(for: $0, query: trimmed) > rankingScore(for: $1, query: trimmed) }
-        await localIndex.upsert(products: sorted.prefix(40).map { $0 })
-        return sorted
     }
 
     func product(forBarcode barcode: String) async throws -> Product? {
@@ -150,7 +156,14 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
             variants.append(semantic.joined(separator: " "))
         }
 
-        let unique = Array(NSOrderedSet(array: variants.compactMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty }).compactMap { $0 as? String })
+        var seen: Set<String> = []
+        let unique = variants
+            .compactMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty }
+            .filter { value in
+                let key = normalizedComparableText(value)
+                guard !key.isEmpty else { return false }
+                return seen.insert(key).inserted
+            }
         return Array(unique.prefix(4))
     }
 
@@ -318,6 +331,11 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
     }
 }
 
+private struct VariantFetchResult: Sendable {
+    var products: [Product]
+    var encounteredNetworkError: Bool
+}
+
 private let brandOrStoreNoiseTerms: Set<String> = [
     "trader", "joe", "joes", "tj", "tjs", "market", "foods", "whole", "store"
 ]
@@ -359,14 +377,14 @@ private struct OpenFoodFactsClient: Sendable {
     private func request(for url: URL?) -> URLRequest {
         var request = URLRequest(url: url ?? baseURL)
         request.setValue("Thistle/0.1 (personal nutrition app; contact: local-dev)", forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 8
+        request.timeoutInterval = 5
         return request
     }
 
     private static func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 8
-        configuration.timeoutIntervalForResource = 12
+        configuration.timeoutIntervalForRequest = 5
+        configuration.timeoutIntervalForResource = 7
         configuration.waitsForConnectivity = false
         return URLSession(configuration: configuration)
     }

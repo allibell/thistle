@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import os
 #if canImport(NaturalLanguage)
 import NaturalLanguage
 #endif
@@ -71,6 +72,7 @@ final class AppStore: ObservableObject {
     @Published var barcodeLookupError: String?
     @Published var isLookingUpBarcode = false
     @Published private(set) var localCatalogSnapshot: [Product] = []
+    @Published private(set) var perfDebugLog: [String] = []
 
     private let analyzer = IngredientAnalyzer()
     private let catalogService: ProductCatalogServing
@@ -84,6 +86,8 @@ final class AppStore: ObservableObject {
     private let maxCachedProducts = 350
     private let maxSearchResults = 60
     private let maxFavoriteProducts = 24
+    private let maxDeepSearchDebugEntries = 160
+    private let maxPerfDebugEntries = 260
     private let calendar = Calendar.current
     private var cancellables: Set<AnyCancellable> = []
     private var searchCache: [String: CachedProductList] = [:]
@@ -94,6 +98,8 @@ final class AppStore: ObservableObject {
     private var recentLoggedProductIDs: Set<String> = []
     private var localIndexSyncTask: Task<Void, Never>?
     private var semanticRankingTask: Task<Void, Never>?
+    private var remoteSearchTask: Task<Void, Never>?
+    private let searchLogger = Logger(subsystem: "com.allibell.thistle", category: "search")
 
     init(
         catalogService: ProductCatalogServing = ProductCatalogService(),
@@ -276,6 +282,8 @@ final class AppStore: ObservableObject {
 
     func performSearch() async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let started = Date.now
+        logSearch("Search submit: '\(trimmed)'")
         activeSearchQuery = trimmed
         hasSubmittedSearch = true
         searchError = nil
@@ -286,60 +294,63 @@ final class AppStore: ObservableObject {
         semanticRankingScores = [:]
 
         guard !trimmed.isEmpty else {
+            isSearching = false
+            remoteSearchTask?.cancel()
+            remoteSearchTask = nil
             return
         }
 
-        let localCandidates = await localSearchIndex.searchProducts(matching: trimmed, limit: maxSearchResults)
-        let normalizedLocalCandidates = deduplicatedProductsByID(localCandidates.map(withInferredStores))
-        localIndexedResults = normalizedLocalCandidates
-        scheduleSemanticRanking(for: trimmed, candidates: normalizedLocalCandidates)
-        mergeIntoCache(Array(normalizedLocalCandidates.prefix(20)))
-
         isSearching = true
-        defer { isSearching = false }
+        remoteSearchTask?.cancel()
+        remoteSearchTask = nil
 
-        do {
-            let cacheKey = normalizedSearchKey(for: trimmed)
-            if let cached = searchCache[cacheKey], isFresh(cached.cachedAt, ttl: catalogCacheTTL) {
-                let normalizedCachedProducts = cached.products.map(withInferredStores)
-                remoteSearchResults = normalizedCachedProducts
-                scheduleSemanticRanking(for: trimmed, candidates: normalizedLocalCandidates + normalizedCachedProducts)
-                mergeIntoCache(Array(normalizedCachedProducts.prefix(24)))
-                if cached.products.isEmpty, localIndexedResults.isEmpty, matchingMeals.isEmpty {
-                    searchError = "No matching foods found in your local library or the online catalog."
-                }
-                return
+        // Immediate in-memory pass keeps search responsive while indexed/fuzzy lookups catch up.
+        let normalizedLocalCandidates = quickLocalCandidates(for: trimmed, limit: maxSearchResults)
+        localIndexedResults = normalizedLocalCandidates
+        scheduleSemanticRanking(for: trimmed, candidates: Array(normalizedLocalCandidates.prefix(30)))
+        logSearch("Local snapshot: \(normalizedLocalCandidates.count) candidates in \(Date.now.timeIntervalSince(started).formatted(.number.precision(.fractionLength(3))))s")
+
+        let maxResults = maxSearchResults
+        Task(priority: .utility) { [localSearchIndex] in
+            let indexed = await localSearchIndex.searchProducts(matching: trimmed, limit: maxResults)
+            await MainActor.run {
+                guard self.activeSearchQuery == trimmed else { return }
+                let normalizedIndexed = self.deduplicatedProductsByID(indexed.map(self.withInferredStores))
+                self.localIndexedResults = normalizedIndexed
+                self.scheduleSemanticRanking(for: trimmed, candidates: normalizedIndexed + self.remoteSearchResults)
+                self.logSearch("Indexed local search: \(normalizedIndexed.count) candidates")
             }
+        }
 
-            if let stale = searchCache[cacheKey], !stale.products.isEmpty {
-                // Show stale results immediately, then refresh from network.
-                let normalizedStaleProducts = stale.products.map(withInferredStores)
-                remoteSearchResults = normalizedStaleProducts
-                scheduleSemanticRanking(for: trimmed, candidates: normalizedLocalCandidates + normalizedStaleProducts)
-                mergeIntoCache(Array(normalizedStaleProducts.prefix(24)))
-            }
-
-            let products = try await catalogService.searchProducts(matching: trimmed)
-            let normalizedProducts = products.map(withInferredStores)
-            if !products.isEmpty {
-                searchCache[cacheKey] = CachedProductList(products: normalizedProducts, cachedAt: .now)
-                persistState()
-            } else {
-                searchCache[cacheKey] = nil
-            }
-
-            remoteSearchResults = normalizedProducts
-            scheduleSemanticRanking(for: trimmed, candidates: normalizedLocalCandidates + normalizedProducts)
-            mergeIntoCache(Array(normalizedProducts.prefix(24)))
-            if products.isEmpty, localIndexedResults.isEmpty, matchingMeals.isEmpty {
+        let cacheKey = normalizedSearchKey(for: trimmed)
+        if let cached = searchCache[cacheKey], isFresh(cached.cachedAt, ttl: catalogCacheTTL) {
+            let normalizedCachedProducts = cached.products.map(withInferredStores)
+            remoteSearchResults = normalizedCachedProducts
+            scheduleSemanticRanking(for: trimmed, candidates: normalizedLocalCandidates + normalizedCachedProducts)
+            mergeIntoCache(Array(normalizedCachedProducts.prefix(18)))
+            if cached.products.isEmpty, localIndexedResults.isEmpty, matchingMeals.isEmpty {
                 searchError = "No matching foods found in your local library or the online catalog."
             }
-        } catch {
-            if remoteSearchResults.isEmpty {
-                searchError = error.localizedDescription
-            } else {
-                searchError = "Showing cached results. Live catalog refresh failed."
-            }
+            isSearching = false
+            logSearch("Fresh cache hit: \(normalizedCachedProducts.count) products in \(Date.now.timeIntervalSince(started).formatted(.number.precision(.fractionLength(3))))s")
+            return
+        }
+
+        if let stale = searchCache[cacheKey], !stale.products.isEmpty {
+            // Show stale results immediately, then refresh from network in the background.
+            let normalizedStaleProducts = stale.products.map(withInferredStores)
+            remoteSearchResults = normalizedStaleProducts
+            scheduleSemanticRanking(for: trimmed, candidates: normalizedLocalCandidates + normalizedStaleProducts)
+            mergeIntoCache(Array(normalizedStaleProducts.prefix(18)))
+            logSearch("Stale cache shown immediately: \(normalizedStaleProducts.count) products")
+        }
+
+        remoteSearchTask = Task { [weak self] in
+            await self?.refreshRemoteCatalogSearch(
+                query: trimmed,
+                cacheKey: cacheKey,
+                startedAt: started
+            )
         }
     }
 
@@ -347,7 +358,10 @@ final class AppStore: ObservableObject {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         activeSearchQuery = trimmed
+        appendPerfLog("Deep search submit: '\(trimmed)'", category: "DeepSearch")
+        let started = Date.now
         await runDeepSearch(for: trimmed)
+        appendPerfLog("Deep search finished in \(Date.now.timeIntervalSince(started).formatted(.number.precision(.fractionLength(3))))s for '\(trimmed)'", category: "DeepSearch")
     }
 
     func lookupBarcode(_ barcode: String) async {
@@ -418,6 +432,9 @@ final class AppStore: ObservableObject {
         }
         query = ""
         activeSearchQuery = ""
+        remoteSearchTask?.cancel()
+        remoteSearchTask = nil
+        isSearching = false
         localIndexedResults = []
         semanticRankingTask?.cancel()
         semanticRankingScores = [:]
@@ -425,6 +442,51 @@ final class AppStore: ObservableObject {
         deepSearchResult = nil
         searchError = nil
         hasSubmittedSearch = false
+    }
+
+    func clearPerfDebugLog() {
+        perfDebugLog = []
+    }
+
+    func perfDebugReport() -> String {
+        perfDebugLog.joined(separator: "\n")
+    }
+
+    func runDefaultSearchPerfProbe() async {
+        let queries = ["avocado", "salmon", "trader joe eggs", "almond malk", "spinach", "zucchini"]
+        appendPerfLog("Starting perf probe for \(queries.count) queries.", category: "Probe")
+        let overallStart = Date.now
+
+        for query in queries {
+            if Task.isCancelled { break }
+            let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+
+            let localStart = Date.now
+            let localCandidates = quickLocalCandidates(for: trimmed, limit: 20)
+            appendPerfLog(
+                "Probe '\(trimmed)' local candidates: \(localCandidates.count) in \(Date.now.timeIntervalSince(localStart).formatted(.number.precision(.fractionLength(3))))s",
+                category: "Probe"
+            )
+
+            let remoteStart = Date.now
+            do {
+                let remote = try await withTimeout(seconds: 6) { [self] in
+                    try await self.catalogService.searchProducts(matching: trimmed)
+                }
+                appendPerfLog(
+                    "Probe '\(trimmed)' remote results: \(remote.count) in \(Date.now.timeIntervalSince(remoteStart).formatted(.number.precision(.fractionLength(3))))s",
+                    category: "Probe"
+                )
+            } catch {
+                appendPerfLog(
+                    "Probe '\(trimmed)' remote failed in \(Date.now.timeIntervalSince(remoteStart).formatted(.number.precision(.fractionLength(3))))s: \(error.localizedDescription)",
+                    category: "Probe"
+                )
+            }
+        }
+
+        appendPerfLog("Perf probe finished in \(Date.now.timeIntervalSince(overallStart).formatted(.number.precision(.fractionLength(3))))s.", category: "Probe")
     }
 
     func analysis(for product: Product) -> ProductAnalysis {
@@ -1899,12 +1961,16 @@ final class AppStore: ObservableObject {
     private func appendDeepSearchLog(_ message: String) {
         let timestamp = Date.now.formatted(date: .omitted, time: .standard)
         deepSearchDebugLog.append("[\(timestamp)] \(message)")
+        if deepSearchDebugLog.count > maxDeepSearchDebugEntries {
+            deepSearchDebugLog.removeFirst(deepSearchDebugLog.count - maxDeepSearchDebugEntries)
+        }
     }
 
     private func startNutritionBackfillIfNeeded() {
         guard !didStartNutritionBackfill else { return }
         didStartNutritionBackfill = true
-        Task { [weak self] in
+        Task(priority: .background) { [weak self] in
+            try? await Task.sleep(for: .seconds(12))
             await self?.backfillMissingNutritionFacts()
         }
     }
@@ -1979,7 +2045,7 @@ final class AppStore: ObservableObject {
                 product.nutrition.needsNutritionBackfill
                     && (product.source == .openFoodFacts || product.source == .upcItemDB || product.source == .deepSearch || product.source == .manual || product.source == .usda)
             }
-            .prefix(120)
+            .prefix(24)
 
         guard !candidates.isEmpty else { return }
 
@@ -2021,24 +2087,24 @@ final class AppStore: ObservableObject {
     }
 
     private func backfilledNutritionCandidate(for product: Product) async -> Product? {
+        // Keep startup backfill lightweight: avoid broad network searches that can impact active UI searches.
+        let localBetterMatch = localCatalog.first { candidate in
+            candidate.id != product.id
+                && nutritionBackfillScore(existing: product.nutrition, candidate: candidate.nutrition) > 0
+                && (candidate.canonicalLookupKey == product.canonicalLookupKey
+                    || normalizedComparableText(candidate.name) == normalizedComparableText(product.name))
+        }
+        if let localBetterMatch {
+            return withInferredStores(localBetterMatch)
+        }
+
         let barcode = BarcodeNormalizer.digitsOnly(from: product.barcode)
         if !barcode.isEmpty,
            let fetched = try? await catalogService.product(forBarcode: barcode),
            nutritionBackfillScore(existing: product.nutrition, candidate: fetched.nutrition) > 0 {
             return withInferredStores(fetched)
         }
-
-        let query = "\(product.brand) \(product.name)"
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard query.count >= 2 else { return nil }
-
-        guard let matches = try? await catalogService.searchProducts(matching: query) else { return nil }
-        let best = matches.first { candidate in
-            nutritionBackfillScore(existing: product.nutrition, candidate: candidate.nutrition) > 0
-                && (candidate.canonicalLookupKey == product.canonicalLookupKey
-                    || normalizedComparableText(candidate.name) == normalizedComparableText(product.name))
-        }
-        return best.map(withInferredStores)
+        return nil
     }
 
     private func nutritionBackfillScore(existing: NutritionFacts, candidate: NutritionFacts) -> Int {
@@ -2058,6 +2124,129 @@ final class AppStore: ObservableObject {
         if existing.vitaminCMg <= 0.0001, candidate.vitaminCMg > 0.0001 { score += 1 }
 
         return score
+    }
+
+    private func withTimeout<T: Sendable>(
+        seconds: Double,
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask {
+                try await operation()
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(seconds))
+                throw SearchTimeoutError()
+            }
+
+            guard let first = try await group.next() else {
+                throw SearchTimeoutError()
+            }
+            group.cancelAll()
+            return first
+        }
+    }
+
+    private func refreshRemoteCatalogSearch(
+        query: String,
+        cacheKey: String,
+        startedAt: Date
+    ) async {
+        defer {
+            if activeSearchQuery == query {
+                isSearching = false
+            }
+        }
+
+        do {
+            logSearch("Live catalog refresh started for '\(query)'")
+            let products = try await withTimeout(seconds: 6) { [self] in
+                try await self.catalogService.searchProducts(matching: query)
+            }
+            guard !Task.isCancelled, activeSearchQuery == query else { return }
+
+            let normalizedProducts = products.map(withInferredStores)
+            if !normalizedProducts.isEmpty {
+                searchCache[cacheKey] = CachedProductList(products: normalizedProducts, cachedAt: .now)
+                persistState()
+            } else {
+                searchCache[cacheKey] = nil
+            }
+
+            remoteSearchResults = normalizedProducts
+            scheduleSemanticRanking(for: query, candidates: localIndexedResults + normalizedProducts)
+            mergeIntoCache(Array(normalizedProducts.prefix(18)))
+            if normalizedProducts.isEmpty, localIndexedResults.isEmpty, matchingMeals.isEmpty {
+                searchError = "No matching foods found in your local library or the online catalog."
+            } else {
+                searchError = nil
+            }
+            logSearch("Live catalog refresh complete: \(normalizedProducts.count) products in \(Date.now.timeIntervalSince(startedAt).formatted(.number.precision(.fractionLength(3))))s")
+        } catch is CancellationError {
+            logSearch("Live catalog refresh cancelled for '\(query)'")
+        } catch {
+            guard activeSearchQuery == query else { return }
+            if remoteSearchResults.isEmpty {
+                if error is SearchTimeoutError {
+                    searchError = "Catalog search timed out. Try Deep Search or try again."
+                } else {
+                    searchError = error.localizedDescription
+                }
+            } else {
+                searchError = "Showing cached results. Live catalog refresh failed."
+            }
+            logSearch("Live catalog refresh failed for '\(query)': \(error.localizedDescription)")
+        }
+    }
+
+    private func logSearch(_ message: String) {
+        appendPerfLog(message, category: "Search")
+        searchLogger.debug("\(message, privacy: .public)")
+        #if DEBUG
+        print("[Search] \(message)")
+        #endif
+    }
+
+    private func appendPerfLog(_ message: String, category: String) {
+        let timestamp = Date.now.formatted(date: .omitted, time: .standard)
+        let line = "[\(timestamp)] [\(category)] \(message)"
+        perfDebugLog.append(line)
+        if perfDebugLog.count > maxPerfDebugEntries {
+            perfDebugLog.removeFirst(perfDebugLog.count - maxPerfDebugEntries)
+        }
+        #if DEBUG
+        print("[Perf] \(line)")
+        #endif
+    }
+
+    private func quickLocalCandidates(for query: String, limit: Int) -> [Product] {
+        let normalizedQuery = normalizedComparableText(query)
+        guard !normalizedQuery.isEmpty else { return [] }
+
+        let queryTerms = normalizedTerms(for: normalizedQuery)
+        guard !queryTerms.isEmpty else { return [] }
+
+        var matches: [Product] = []
+        matches.reserveCapacity(min(limit * 2, 120))
+
+        for product in localCatalog {
+            let haystack = normalizedComparableText("\(product.name) \(product.brand) \(product.stores.joined(separator: " "))")
+            guard !haystack.isEmpty else { continue }
+
+            let containsAllTerms = queryTerms.allSatisfy(haystack.contains)
+            let containsPrefixTerm = queryTerms.contains { term in
+                haystack.contains(" \(term)") || haystack.hasPrefix(term)
+            }
+
+            if containsAllTerms || containsPrefixTerm {
+                matches.append(withInferredStores(product))
+                if matches.count >= limit * 2 {
+                    break
+                }
+            }
+        }
+
+        return Array(deduplicatedProductsByID(matches).prefix(limit))
     }
 
     private func parseWholeFoodsOrderItems(from payload: String, maxItems: Int) -> [ParsedOrderItem] {
@@ -2340,6 +2529,12 @@ final class AppStore: ObservableObject {
 
 private struct ParsedOrderItem {
     var name: String
+}
+
+private struct SearchTimeoutError: LocalizedError {
+    var errorDescription: String? {
+        "Search timed out."
+    }
 }
 
 private actor SemanticSearchRanker {

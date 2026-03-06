@@ -133,9 +133,9 @@ struct ProductCard: View {
         .background(ThistleTheme.cardElevated, in: RoundedRectangle(cornerRadius: 22))
         .overlay {
             RoundedRectangle(cornerRadius: 22)
-                .stroke(ThistleTheme.blossomPurple.opacity(0.08), lineWidth: 1)
+                .stroke(ThistleTheme.blossomPurple.opacity(0.05), lineWidth: 0.75)
         }
-        .shadow(color: ThistleTheme.blossomPurple.opacity(0.08), radius: 12, y: 6)
+        .shadow(color: .clear, radius: 0, y: 0)
     }
 }
 

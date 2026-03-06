@@ -12,6 +12,10 @@ struct SearchView: View {
     @State private var searchResultLimit = 20
     @State private var recentHistoryLimit = 4
     @State private var favoritesLimit = 4
+    @State private var showAllDebugLogEntries = false
+    @State private var showPerfDebugEntries = false
+    @State private var isRunningPerfProbe = false
+    @State private var perfCopiedConfirmation = false
 
     var body: some View {
         ScrollView {
@@ -51,9 +55,11 @@ struct SearchView: View {
                     noResultsActions
                 }
 
-                if store.isDeepSearching && !store.deepSearchDebugLog.isEmpty {
+                if !store.deepSearchDebugLog.isEmpty {
                     debugSection
                 }
+
+                perfSection
 
                 if shouldShowCommittedResults {
                     committedResultSections
@@ -243,6 +249,11 @@ struct SearchView: View {
             .buttonStyle(.bordered)
             .disabled(store.query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || store.isDeepSearching)
 
+            Button("Add Product (Link)") {
+                showingAddProductSheet = true
+            }
+            .buttonStyle(.bordered)
+
             Button("Add Manually") {
                 showingManualProductSheet = true
             }
@@ -320,11 +331,6 @@ struct SearchView: View {
     private var noResultsActions: some View {
         VStack(alignment: .leading, spacing: 8) {
             if hasAttemptedDeepSearchForCurrentQuery {
-                Button("Add Product (Link)") {
-                    showingAddProductSheet = true
-                }
-                .buttonStyle(.borderedProminent)
-
                 Button("Try Deep Search Again") {
                     Task { await store.runManualDeepSearchForCurrentQuery() }
                 }
@@ -349,10 +355,24 @@ struct SearchView: View {
     }
 
     private var debugSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Deep Search Debug")
-                .font(.headline)
-            ForEach(Array(store.deepSearchDebugLog.enumerated()), id: \.offset) { _, entry in
+        let entries = showAllDebugLogEntries
+            ? store.deepSearchDebugLog
+            : Array(store.deepSearchDebugLog.suffix(30))
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Deep Search Debug")
+                    .font(.headline)
+                Spacer()
+                if store.deepSearchDebugLog.count > 30 {
+                    Button(showAllDebugLogEntries ? "Show Recent" : "Show All") {
+                        showAllDebugLogEntries.toggle()
+                    }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(ThistleTheme.blossomPurple)
+                }
+            }
+            ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
                 Text(entry)
                     .font(.caption.monospaced())
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -360,6 +380,108 @@ struct SearchView: View {
         }
         .padding()
         .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var perfSection: some View {
+        let entries = showPerfDebugEntries
+            ? store.perfDebugLog
+            : Array(store.perfDebugLog.suffix(30))
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Perf Debug")
+                    .font(.headline)
+                Spacer()
+                if perfCopiedConfirmation {
+                    Label("Copied", systemImage: "checkmark.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(ThistleTheme.primaryGreen)
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    copyPerfLogToClipboard()
+                } label: {
+                    Label("Copy Logs", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+                .disabled(store.perfDebugLog.isEmpty)
+
+                Button("Clear") {
+                    store.clearPerfDebugLog()
+                }
+                .buttonStyle(.bordered)
+                .disabled(store.perfDebugLog.isEmpty)
+
+                Button {
+                    guard !isRunningPerfProbe else { return }
+                    isRunningPerfProbe = true
+                    Task {
+                        await store.runDefaultSearchPerfProbe()
+                        await MainActor.run {
+                            isRunningPerfProbe = false
+                        }
+                    }
+                } label: {
+                    if isRunningPerfProbe {
+                        ProgressView()
+                    } else {
+                        Text("Run Probe")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isRunningPerfProbe)
+            }
+
+            if !store.perfDebugLog.isEmpty {
+                HStack {
+                    Text("\(store.perfDebugLog.count) entries")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if store.perfDebugLog.count > 30 {
+                        Button(showPerfDebugEntries ? "Show Recent" : "Show All") {
+                            showPerfDebugEntries.toggle()
+                        }
+                        .font(.caption.weight(.semibold))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(ThistleTheme.blossomPurple)
+                    }
+                }
+
+                ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
+                    Text(entry)
+                        .font(.caption.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                Text("Run a search or tap Run Probe to collect timing logs.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private func copyPerfLogToClipboard() {
+        let report = store.perfDebugReport()
+        guard !report.isEmpty else { return }
+#if canImport(UIKit)
+        UIPasteboard.general.string = report
+#endif
+        withAnimation(.easeOut(duration: 0.2)) {
+            perfCopiedConfirmation = true
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            await MainActor.run {
+                withAnimation(.easeIn(duration: 0.2)) {
+                    perfCopiedConfirmation = false
+                }
+            }
+        }
     }
 
     private var mealsSection: some View {
