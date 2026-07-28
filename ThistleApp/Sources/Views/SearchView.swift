@@ -134,11 +134,12 @@ struct SearchView: View {
     private var filters: some View {
         VStack(alignment: .leading, spacing: 12) {
             Picker("Diet", selection: $store.selectedDiet) {
+                Text("No primary diet").tag(nil as DietProfile?)
                 ForEach(DietProfile.allCases) { diet in
-                    Text(diet.rawValue).tag(diet)
+                    Text(diet.rawValue).tag(Optional(diet))
                 }
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(.menu)
 
             DisclosureGroup("More Filters", isExpanded: $showingMoreFilters) {
                 VStack(alignment: .leading, spacing: 10) {
@@ -149,6 +150,16 @@ struct SearchView: View {
                     }
                     .pickerStyle(.menu)
 
+                    Text("Ingredient restrictions")
+                        .font(.subheadline.weight(.semibold))
+
+                    ForEach(DietaryRestriction.allCases) { restriction in
+                        filterToggle(
+                            title: restriction.rawValue,
+                            isOn: restrictionBinding(restriction)
+                        )
+                    }
+
                     filterToggle(title: "Hide Red", isOn: $store.onlyShowCompatible)
                     filterToggle(title: "Hide Caution", isOn: $store.hideCautionOrIncomplete)
                 }
@@ -157,6 +168,19 @@ struct SearchView: View {
         }
         .padding()
         .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private func restrictionBinding(_ restriction: DietaryRestriction) -> Binding<Bool> {
+        Binding(
+            get: { store.dietaryRestrictions.contains(restriction) },
+            set: { isSelected in
+                if isSelected {
+                    store.dietaryRestrictions.insert(restriction)
+                } else {
+                    store.dietaryRestrictions.remove(restriction)
+                }
+            }
+        )
     }
 
     private var shouldShowCommittedResults: Bool {

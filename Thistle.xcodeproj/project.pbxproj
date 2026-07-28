@@ -35,6 +35,8 @@
 		D2A1080F4E1C83D0C24F56E8 /* NutritionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FF5B9402859F0DDC532FB62 /* NutritionModels.swift */; };
 		D4011F1C0D1B19B287E05B9A /* UnicaOne-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 56AC1651C0FC3D148FB88892 /* UnicaOne-Regular.ttf */; };
 		D957BC66181AAAA835E13A71 /* ProductEntrySheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D16AAEDB8A8E7FDE39BE68FC /* ProductEntrySheet.swift */; };
+		D0A11CE90000000000000001 /* OpenAIFoodLogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A11CE90000000000000003 /* OpenAIFoodLogService.swift */; };
+		D0A11CE90000000000000002 /* FoodDraftEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A11CE90000000000000004 /* FoodDraftEditorView.swift */; };
 		EF3A8F74820EACDAB57C9ABD /* ThistleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B66191DC097214D5BD3030CD /* ThistleApp.swift */; };
 		FB6391274E945F3AC0CE55EE /* NutritionGoalsWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97576D7AC9A576061510979A /* NutritionGoalsWidget.swift */; };
 /* End PBXBuildFile section */
@@ -89,6 +91,8 @@
 		C1B0326532AA2A269E54964B /* ProductDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductDetailView.swift; sourceTree = "<group>"; };
 		D16AAEDB8A8E7FDE39BE68FC /* ProductEntrySheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductEntrySheet.swift; sourceTree = "<group>"; };
 		D869E5234B4DF4CD04D85215 /* DiaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiaryView.swift; sourceTree = "<group>"; };
+		D0A11CE90000000000000003 /* OpenAIFoodLogService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIFoodLogService.swift; sourceTree = "<group>"; };
+		D0A11CE90000000000000004 /* FoodDraftEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodDraftEditorView.swift; sourceTree = "<group>"; };
 		DEA8C0660D468047F7C570BD /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
 		EBF83D08D07E521287F90A8E /* IngredientAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IngredientAnalyzer.swift; sourceTree = "<group>"; };
 		F9BDEB67713453B31388851A /* QuickLogSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickLogSheet.swift; sourceTree = "<group>"; };
@@ -168,6 +172,7 @@
 			isa = PBXGroup;
 			children = (
 				D869E5234B4DF4CD04D85215 /* DiaryView.swift */,
+				D0A11CE90000000000000004 /* FoodDraftEditorView.swift */,
 				3ED20BDA66DA7EF678260FD2 /* GoalsView.swift */,
 				0D31C97555E7FEA256B10086 /* MealsView.swift */,
 				C1B0326532AA2A269E54964B /* ProductDetailView.swift */,
@@ -208,6 +213,7 @@
 				FA6526FB9CE2F1EF6A3353FD /* DeepSearchService.swift */,
 				EBF83D08D07E521287F90A8E /* IngredientAnalyzer.swift */,
 				82B6D781C1FDF22859F9D9C5 /* LocalCatalogSearchIndex.swift */,
+				D0A11CE90000000000000003 /* OpenAIFoodLogService.swift */,
 				7604E154EAE49BC475E72FF0 /* ProductCatalogService.swift */,
 				588DE83D1ABF96A3BC4E5D43 /* SampleData.swift */,
 			);
@@ -333,6 +339,8 @@
 				A2D910C06474C6B283EB4AE7 /* ProductCatalogService.swift in Sources */,
 				33B926E56A34904D0DB23A6B /* ProductDetailView.swift in Sources */,
 				D957BC66181AAAA835E13A71 /* ProductEntrySheet.swift in Sources */,
+				D0A11CE90000000000000001 /* OpenAIFoodLogService.swift in Sources */,
+				D0A11CE90000000000000002 /* FoodDraftEditorView.swift in Sources */,
 				C5622A49FFEF273EF68A09C6 /* QuickLogSheet.swift in Sources */,
 				1B15392BA8A61437081324CF /* RootTabView.swift in Sources */,
 				568BAB695AE0EA0E0E20AA0B /* SampleData.swift in Sources */,
@@ -376,6 +384,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Thistle;
 				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleTypeRole = Editor;\n    CFBundleURLName = \"com.allibell.thistle\";\n    CFBundleURLSchemes =     (\n        thistle\n    );\n}";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan barcodes to look up foods in your nutrition library.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record a spoken food description for transcription into an editable diary draft.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -403,6 +412,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Thistle;
 				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleTypeRole = Editor;\n    CFBundleURLName = \"com.allibell.thistle\";\n    CFBundleURLSchemes =     (\n        thistle\n    );\n}";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan barcodes to look up foods in your nutrition library.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record a spoken food description for transcription into an editable diary draft.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

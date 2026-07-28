@@ -12,10 +12,32 @@ struct GoalsView: View {
         Form {
             Section("Diet") {
                 Picker("Current diet", selection: $store.selectedDiet) {
+                    Text("None").tag(nil as DietProfile?)
                     ForEach(DietProfile.allCases) { diet in
-                        Text(diet.rawValue).tag(diet)
+                        Text(diet.rawValue).tag(Optional(diet))
                     }
                 }
+
+                Text("Choose a primary diet only when one applies to your current goals.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Ingredient Restrictions") {
+                ForEach(DietaryRestriction.allCases) { restriction in
+                    Toggle(isOn: restrictionBinding(restriction)) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(restriction.rawValue)
+                            Text(restriction.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                Text("Checks are based on listed ingredients and cannot verify cross-contact or facility warnings.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Calories") {
@@ -165,6 +187,19 @@ struct GoalsView: View {
 
     private var totalPercent: Int {
         draftProteinPercent + draftCarbPercent + draftFatPercent
+    }
+
+    private func restrictionBinding(_ restriction: DietaryRestriction) -> Binding<Bool> {
+        Binding(
+            get: { store.dietaryRestrictions.contains(restriction) },
+            set: { isSelected in
+                if isSelected {
+                    store.dietaryRestrictions.insert(restriction)
+                } else {
+                    store.dietaryRestrictions.remove(restriction)
+                }
+            }
+        )
     }
 
     private func goalsBinding<Value>(_ keyPath: WritableKeyPath<MacroGoals, Value>) -> Binding<Value> {

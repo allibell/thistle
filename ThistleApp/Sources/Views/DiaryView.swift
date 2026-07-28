@@ -209,6 +209,9 @@ struct DiaryView: View {
                 }
                 Spacer()
                 RatingBadge(rating: entry.analysis.rating)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
             }
 
             MacroSummaryView(nutrition: entry.nutrition)
@@ -225,21 +228,14 @@ struct DiaryView: View {
 
     @ViewBuilder
     private func diaryEntry(_ entry: LoggedFood) -> some View {
-        if let product = linkedProduct(for: entry) {
-            NavigationLink {
-                ProductDetailView(product: product)
-            } label: {
-                diaryCard(entry: entry)
-            }
-            .buttonStyle(.plain)
-            .contextMenu {
-                diaryContextMenu(entry: entry)
-            }
-        } else {
+        NavigationLink {
+            LoggedFoodDetailView(entryID: entry.id)
+        } label: {
             diaryCard(entry: entry)
-                .contextMenu {
-                    diaryContextMenu(entry: entry)
-                }
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            diaryContextMenu(entry: entry)
         }
     }
 
@@ -391,6 +387,139 @@ struct DiaryView: View {
         case .vitaminD: return store.goals.vitaminDMcg
         case .saturatedFat: return store.goals.saturatedFatLimit
         case .cholesterol: return store.goals.cholesterolLimitMg
+        }
+    }
+}
+
+struct LoggedFoodDetailView: View {
+    @EnvironmentObject private var store: AppStore
+    let entryID: String
+
+    @State private var draftServings = 1.0
+    @State private var didUpdateServing = false
+
+    private var entry: LoggedFood? {
+        store.loggedFoods.first { $0.id == entryID }
+    }
+
+    var body: some View {
+        ScrollView {
+            if let entry {
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(entry.title)
+                                    .font(.title2.weight(.bold))
+                                Text(entry.servingText)
+                                    .foregroundStyle(.secondary)
+                                Text(entry.loggedAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            RatingBadge(rating: entry.analysis.rating)
+                        }
+                        MacroSummaryView(nutrition: entry.nutrition)
+                    }
+                    .padding()
+                    .background(ThistleTheme.cardElevated, in: RoundedRectangle(cornerRadius: 20))
+
+                    RatingExplanationView(analysis: entry.analysis)
+
+                    let components = resolvedComponents(for: entry)
+                    if !components.isEmpty {
+                        FoodComponentTreeView(components: components)
+                    }
+
+                    if let servings = entry.loggedServings, servings > 0 {
+                        servingEditor(entry: entry)
+                    }
+
+                    if let product = linkedProduct(for: entry) {
+                        NavigationLink {
+                            ProductDetailView(product: product)
+                        } label: {
+                            Label("View source product", systemImage: "doc.text.magnifyingglass")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .padding()
+                .onAppear {
+                    draftServings = max(entry.loggedServings ?? 1, 0.1)
+                }
+            } else {
+                ContentUnavailableView(
+                    "Entry no longer exists",
+                    systemImage: "fork.knife.circle",
+                    description: Text("It may have been deleted from the diary.")
+                )
+                .padding()
+            }
+        }
+        .background(ThistleTheme.canvas.ignoresSafeArea())
+        .thistleNavigationTitle("Food Details")
+    }
+
+    private func servingEditor(entry: LoggedFood) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Adjust serving")
+                .font(.headline)
+            Stepper(value: $draftServings, in: 0.1...20, step: 0.1) {
+                Text("\(draftServings.formatted(.number.precision(.fractionLength(0...2)))) x \(entry.baseServingDescription ?? "serving")")
+            }
+            Button {
+                store.updateLoggedFoodServing(entryID: entry.id, servings: draftServings)
+                didUpdateServing = true
+            } label: {
+                Label(didUpdateServing ? "Serving updated" : "Update serving", systemImage: didUpdateServing ? "checkmark.circle.fill" : "square.and.pencil")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding()
+        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
+        .onChange(of: draftServings) { _, _ in
+            didUpdateServing = false
+        }
+    }
+
+    private func linkedProduct(for entry: LoggedFood) -> Product? {
+        if let sourceProductID = entry.sourceProductID {
+            return store.product(withID: sourceProductID)
+        }
+        guard entry.sourceProductIDs.count == 1, let sourceProductID = entry.sourceProductIDs.first else {
+            return nil
+        }
+        return store.product(withID: sourceProductID)
+    }
+
+    private func resolvedComponents(for entry: LoggedFood) -> [FoodItemComponent] {
+        if let components = entry.components, !components.isEmpty {
+            return components
+        }
+
+        guard entry.sourceProductIDs.count > 1 else { return [] }
+        let loggedSourceIDs = Set(entry.sourceProductIDs)
+        guard let meal = store.meals.first(where: { meal in
+            meal.name == entry.title && Set(meal.components.map(\.product.id)) == loggedSourceIDs
+        }) else {
+            return []
+        }
+
+        return meal.components.map { component in
+            let servingText = component.servings == 1
+                ? component.product.servingDescription
+                : "\(component.servings.formatted(.number.precision(.fractionLength(0...2)))) x \(component.product.servingDescription)"
+            return FoodItemComponent(
+                title: component.product.name,
+                servingText: servingText,
+                nutrition: component.product.nutrition * component.servings,
+                analysis: store.analysis(for: component.product),
+                sourceProductID: component.product.id
+            )
         }
     }
 }

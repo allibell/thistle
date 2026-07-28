@@ -20,7 +20,29 @@ enum DietProfile: String, CaseIterable, Identifiable, Codable {
     var id: String { rawValue }
 }
 
-enum ComplianceRating: String, CaseIterable, Codable {
+enum DietaryRestriction: String, CaseIterable, Identifiable, Codable, Hashable {
+    case glutenFree = "Gluten-free"
+    case dairyFree = "Dairy-free"
+    case eggFree = "Egg-free"
+    case soyFree = "Soy-free"
+
+    var id: String { rawValue }
+
+    var detail: String {
+        switch self {
+        case .glutenFree:
+            "Avoids ingredients derived from wheat, barley, and rye."
+        case .dairyFree:
+            "Avoids milk and milk-derived ingredients."
+        case .eggFree:
+            "Avoids eggs and egg-derived ingredients."
+        case .soyFree:
+            "Avoids soy and soy-derived ingredients."
+        }
+    }
+}
+
+enum ComplianceRating: String, CaseIterable, Codable, Sendable {
     case green
     case yellow
     case red
@@ -42,7 +64,7 @@ enum ComplianceRating: String, CaseIterable, Codable {
     }
 }
 
-enum IngredientFlagSeverity: String, Codable {
+enum IngredientFlagSeverity: String, Codable, Sendable {
     case good
     case caution
     case avoid
@@ -252,7 +274,7 @@ struct NutritionDetailFact: Identifiable, Hashable {
     var unit: String
 }
 
-struct IngredientFlag: Identifiable, Hashable, Codable {
+struct IngredientFlag: Identifiable, Hashable, Codable, Sendable {
     var id: String
     var ingredient: String
     var severity: IngredientFlagSeverity
@@ -266,10 +288,159 @@ struct IngredientFlag: Identifiable, Hashable, Codable {
     }
 }
 
-struct ProductAnalysis: Hashable, Codable {
+struct ProductAnalysis: Hashable, Codable, Sendable {
     var rating: ComplianceRating
     var summary: String
     var flags: [IngredientFlag]
+}
+
+enum FoodLogInputMethod: String, Codable, Hashable, Sendable {
+    case catalog
+    case barcode
+    case typed
+    case voice
+    case savedMeal
+    case manual
+}
+
+/// A recursive, source-independent snapshot of how a food was composed when it was logged.
+/// A component can be a catalog product, an estimate, or another composed food.
+struct FoodItemComponent: Identifiable, Hashable, Codable, Sendable {
+    var id: String
+    var title: String
+    var servingText: String
+    var nutrition: NutritionFacts
+    var analysis: ProductAnalysis
+    var sourceProductID: String?
+    var components: [FoodItemComponent]
+
+    init(
+        id: String = UUID().uuidString,
+        title: String,
+        servingText: String,
+        nutrition: NutritionFacts,
+        analysis: ProductAnalysis,
+        sourceProductID: String? = nil,
+        components: [FoodItemComponent] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.servingText = servingText
+        self.nutrition = nutrition
+        self.analysis = analysis
+        self.sourceProductID = sourceProductID
+        self.components = components
+    }
+
+    func scaled(by multiplier: Double) -> FoodItemComponent {
+        var copy = self
+        copy.nutrition = nutrition * multiplier
+        copy.components = components.map { $0.scaled(by: multiplier) }
+        return copy
+    }
+}
+
+/// An editable item produced before anything is committed to the diary. This is the
+/// boundary a future local, ChatGPT, or transcription-backed parser can target.
+struct FoodLogDraftItem: Identifiable, Hashable, Sendable {
+    var id: String
+    var title: String
+    var servings: Double
+    var baseServingDescription: String
+    var baseNutrition: NutritionFacts
+    var analysis: ProductAnalysis
+    var sourceProductID: String?
+    var sourceLabel: String
+    var inputMethod: FoodLogInputMethod
+    var confidence: Double?
+    var notes: [String]
+    var components: [FoodLogDraftItem]
+
+    init(
+        id: String = UUID().uuidString,
+        title: String,
+        servings: Double = 1,
+        baseServingDescription: String,
+        baseNutrition: NutritionFacts,
+        analysis: ProductAnalysis,
+        sourceProductID: String? = nil,
+        sourceLabel: String,
+        inputMethod: FoodLogInputMethod,
+        confidence: Double? = nil,
+        notes: [String] = [],
+        components: [FoodLogDraftItem] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.servings = servings
+        self.baseServingDescription = baseServingDescription
+        self.baseNutrition = baseNutrition
+        self.analysis = analysis
+        self.sourceProductID = sourceProductID
+        self.sourceLabel = sourceLabel
+        self.inputMethod = inputMethod
+        self.confidence = confidence
+        self.notes = notes
+        self.components = components
+    }
+
+    init(product: Product, analysis: ProductAnalysis, inputMethod: FoodLogInputMethod = .catalog) {
+        self.init(
+            title: product.name,
+            baseServingDescription: product.servingDescription,
+            baseNutrition: product.nutrition,
+            analysis: analysis,
+            sourceProductID: product.id,
+            sourceLabel: product.brand.isEmpty ? "Product" : product.brand,
+            inputMethod: inputMethod
+        )
+    }
+
+    var nutrition: NutritionFacts {
+        baseNutrition * servings
+    }
+
+    var servingText: String {
+        servings == 1
+            ? baseServingDescription
+            : "\(servings.formatted(.number.precision(.fractionLength(0...2)))) x \(baseServingDescription)"
+    }
+
+    var componentSnapshot: FoodItemComponent {
+        FoodItemComponent(
+            title: title,
+            servingText: servingText,
+            nutrition: nutrition,
+            analysis: analysis,
+            sourceProductID: sourceProductID,
+            components: components.map(\.componentSnapshot)
+        )
+    }
+
+    var allSourceProductIDs: [String] {
+        [sourceProductID].compactMap { $0 } + components.flatMap(\.allSourceProductIDs)
+    }
+}
+
+struct FreeformFoodLogRequest: Hashable, Sendable {
+    var text: String
+    var inputMethod: FoodLogInputMethod
+}
+
+struct FreeformFoodLogDraft: Identifiable, Hashable, Sendable {
+    var id: String
+    var request: FreeformFoodLogRequest
+    var items: [FoodLogDraftItem]
+
+    init(id: String = UUID().uuidString, request: FreeformFoodLogRequest, items: [FoodLogDraftItem]) {
+        self.id = id
+        self.request = request
+        self.items = items
+    }
+}
+
+protocol FreeformFoodLogParsing: Sendable {
+    func draft(for request: FreeformFoodLogRequest) async throws -> FreeformFoodLogDraft
 }
 
 struct Product: Identifiable, Hashable, Codable, Sendable {
@@ -582,6 +753,10 @@ struct LoggedFood: Identifiable, Hashable, Codable {
     var nutrition: NutritionFacts
     var analysis: ProductAnalysis
     var loggedAt: Date
+    /// Optional for backward compatibility with diary entries written before composed foods.
+    var inputMethod: FoodLogInputMethod?
+    /// Optional for backward compatibility. New composed entries persist recursive snapshots.
+    var components: [FoodItemComponent]?
 
     init(
         id: String = UUID().uuidString,
@@ -593,7 +768,9 @@ struct LoggedFood: Identifiable, Hashable, Codable {
         baseServingDescription: String? = nil,
         nutrition: NutritionFacts,
         analysis: ProductAnalysis,
-        loggedAt: Date
+        loggedAt: Date,
+        inputMethod: FoodLogInputMethod? = nil,
+        components: [FoodItemComponent]? = nil
     ) {
         self.id = id
         self.title = title
@@ -605,6 +782,8 @@ struct LoggedFood: Identifiable, Hashable, Codable {
         self.nutrition = nutrition
         self.analysis = analysis
         self.loggedAt = loggedAt
+        self.inputMethod = inputMethod
+        self.components = components
     }
 }
 
@@ -664,7 +843,8 @@ struct RememberedMealEstimate: Identifiable, Hashable, Codable {
 }
 
 struct PersistedAppState: Codable {
-    var selectedDiet: DietProfile
+    var selectedDiet: DietProfile?
+    var dietaryRestrictions: Set<DietaryRestriction>
     var goals: MacroGoals
     var cachedProducts: [Product]
     var favoriteProductKeys: [String]
@@ -678,7 +858,8 @@ struct PersistedAppState: Codable {
     var rememberedMealEstimates: [RememberedMealEstimate]
 
     init(
-        selectedDiet: DietProfile,
+        selectedDiet: DietProfile?,
+        dietaryRestrictions: Set<DietaryRestriction> = [],
         goals: MacroGoals,
         cachedProducts: [Product],
         favoriteProductKeys: [String],
@@ -692,6 +873,7 @@ struct PersistedAppState: Codable {
         rememberedMealEstimates: [RememberedMealEstimate] = []
     ) {
         self.selectedDiet = selectedDiet
+        self.dietaryRestrictions = dietaryRestrictions
         self.goals = goals
         self.cachedProducts = cachedProducts
         self.favoriteProductKeys = favoriteProductKeys
@@ -707,6 +889,7 @@ struct PersistedAppState: Codable {
 
     private enum CodingKeys: String, CodingKey {
         case selectedDiet
+        case dietaryRestrictions
         case goals
         case cachedProducts
         case favoriteProductKeys
@@ -722,7 +905,8 @@ struct PersistedAppState: Codable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        selectedDiet = try container.decodeIfPresent(DietProfile.self, forKey: .selectedDiet) ?? .whole30
+        selectedDiet = try container.decodeIfPresent(DietProfile.self, forKey: .selectedDiet)
+        dietaryRestrictions = try container.decodeIfPresent(Set<DietaryRestriction>.self, forKey: .dietaryRestrictions) ?? []
         goals = try container.decodeIfPresent(MacroGoals.self, forKey: .goals) ?? .default
         cachedProducts = try container.decodeIfPresent([Product].self, forKey: .cachedProducts) ?? []
         favoriteProductKeys = try container.decodeIfPresent([String].self, forKey: .favoriteProductKeys) ?? []

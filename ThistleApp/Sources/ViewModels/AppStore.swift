@@ -23,7 +23,8 @@ final class AppStore: ObservableObject {
     }
 
     @Published var selectedTab: AppTab = .search
-    @Published var selectedDiet: DietProfile = .whole30
+    @Published var selectedDiet: DietProfile?
+    @Published var dietaryRestrictions: Set<DietaryRestriction> = []
     @Published var goals: MacroGoals = .default
     @Published var cachedProducts: [Product] = [] {
         didSet {
@@ -115,6 +116,7 @@ final class AppStore: ObservableObject {
 
         if let state = persistence.load() {
             selectedDiet = state.selectedDiet
+            dietaryRestrictions = state.dietaryRestrictions
             goals = state.goals
             cachedProducts = state.cachedProducts
             favoriteProductKeys = Set(state.favoriteProductKeys)
@@ -541,7 +543,11 @@ final class AppStore: ObservableObject {
         if let cached = analysisCache[key] {
             return cached
         }
-        let computed = analyzer.analyze(product: product, for: selectedDiet)
+        let computed = analyzer.analyze(
+            product: product,
+            for: selectedDiet,
+            restrictions: dietaryRestrictions
+        )
         analysisCache[key] = computed
         return computed
     }
@@ -926,7 +932,12 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func log(product: Product, servings: Double = 1, loggedAt: Date = .now) {
+    func log(
+        product: Product,
+        servings: Double = 1,
+        loggedAt: Date = .now,
+        inputMethod: FoodLogInputMethod = .catalog
+    ) {
         let nutrition = product.nutrition * servings
         let roundedBaseServing = roundedNumericText(in: product.servingDescription)
         let roundedServingText = servings == 1
@@ -942,7 +953,8 @@ final class AppStore: ObservableObject {
                 baseServingDescription: roundedBaseServing,
                 nutrition: nutrition,
                 analysis: analysis(for: product),
-                loggedAt: loggedAt
+                loggedAt: loggedAt,
+                inputMethod: inputMethod
             ),
             at: 0
         )
@@ -960,7 +972,21 @@ final class AppStore: ObservableObject {
                 baseServingDescription: "meal serving",
                 nutrition: meal.nutrition,
                 analysis: analysis(for: meal),
-                loggedAt: .now
+                loggedAt: .now,
+                inputMethod: .savedMeal,
+                components: meal.components.map { component in
+                    let componentAnalysis = analysis(for: component.product)
+                    let servingText = component.servings == 1
+                        ? component.product.servingDescription
+                        : "\(component.servings.formatted(.number.precision(.fractionLength(0...2)))) x \(component.product.servingDescription)"
+                    return FoodItemComponent(
+                        title: component.product.name,
+                        servingText: servingText,
+                        nutrition: component.product.nutrition * component.servings,
+                        analysis: componentAnalysis,
+                        sourceProductID: component.product.id
+                    )
+                }
             ),
             at: 0
         )
@@ -981,17 +1007,70 @@ final class AppStore: ObservableObject {
                 title: trimmedTitle.isEmpty ? "Quick estimate" : trimmedTitle,
                 servingText: "Estimated meal",
                 sourceProductIDs: [],
+                loggedServings: 1,
+                baseServingDescription: "estimated serving",
                 nutrition: nutrition,
                 analysis: ProductAnalysis(
                     rating: .yellow,
                     summary: "Quick estimate — edit or replace when more accurate information is available.",
                     flags: []
                 ),
-                loggedAt: loggedAt
+                loggedAt: loggedAt,
+                inputMethod: .typed
             ),
             at: 0
         )
         rememberMealEstimate(description: trimmedTitle, nutrition: nutrition)
+    }
+
+    func log(
+        draftItem: FoodLogDraftItem,
+        loggedAt: Date = .now
+    ) {
+        let sourceIDs = [draftItem.sourceProductID].compactMap { $0 }
+            + draftItem.components.flatMap(\.allSourceProductIDs)
+        loggedFoods.insert(
+            LoggedFood(
+                title: draftItem.title,
+                servingText: draftItem.servingText,
+                sourceProductIDs: Array(Set(sourceIDs)).sorted(),
+                sourceProductID: draftItem.sourceProductID,
+                loggedServings: draftItem.servings,
+                baseServingDescription: draftItem.baseServingDescription,
+                nutrition: draftItem.nutrition,
+                analysis: draftItem.analysis,
+                loggedAt: loggedAt,
+                inputMethod: draftItem.inputMethod,
+                components: draftItem.components.isEmpty ? nil : draftItem.components.map(\.componentSnapshot)
+            ),
+            at: 0
+        )
+        for sourceID in Set(sourceIDs) {
+            usageCounts[sourceID, default: 0] += 1
+        }
+        if draftItem.inputMethod == .typed, draftItem.sourceProductID == nil {
+            rememberMealEstimate(description: draftItem.title, nutrition: draftItem.nutrition)
+        }
+    }
+
+    /// Replaces the editable content of a diary entry while preserving its identity and date.
+    /// A future free-form review screen can use this after the user corrects a match or component.
+    func updateLoggedFood(entryID: String, from draftItem: FoodLogDraftItem) {
+        guard let index = loggedFoods.firstIndex(where: { $0.id == entryID }) else { return }
+        let sourceIDs = [draftItem.sourceProductID].compactMap { $0 }
+            + draftItem.components.flatMap(\.allSourceProductIDs)
+        var entry = loggedFoods[index]
+        entry.title = draftItem.title
+        entry.servingText = draftItem.servingText
+        entry.sourceProductIDs = Array(Set(sourceIDs)).sorted()
+        entry.sourceProductID = draftItem.sourceProductID
+        entry.loggedServings = draftItem.servings
+        entry.baseServingDescription = draftItem.baseServingDescription
+        entry.nutrition = draftItem.nutrition
+        entry.analysis = draftItem.analysis
+        entry.inputMethod = draftItem.inputMethod
+        entry.components = draftItem.components.isEmpty ? nil : draftItem.components.map(\.componentSnapshot)
+        loggedFoods[index] = entry
     }
 
     func quickMealEstimate(description: String) -> NutritionInferenceEstimate? {
@@ -1180,6 +1259,7 @@ final class AppStore: ObservableObject {
             let roundedAmount = servings.formatted(.number.precision(.fractionLength(0...2)))
             entry.servingText = "\(roundedAmount) x \(entry.baseServingDescription ?? "meal serving")"
             entry.nutrition = entry.nutrition * scaleFactor
+            entry.components = entry.components?.map { $0.scaled(by: scaleFactor) }
             loggedFoods[index] = entry
             return
         }
@@ -1201,6 +1281,7 @@ final class AppStore: ObservableObject {
         if let previousServings = entry.loggedServings, previousServings > 0 {
             let multiplier = servings / previousServings
             entry.nutrition = entry.nutrition * multiplier
+            entry.components = entry.components?.map { $0.scaled(by: multiplier) }
             let baseDescription = roundedNumericText(in: entry.baseServingDescription ?? entry.servingText)
             entry.baseServingDescription = baseDescription
             entry.servingText = servings == 1
@@ -2172,6 +2253,12 @@ final class AppStore: ObservableObject {
                 self?.persistState()
             }
             .store(in: &cancellables)
+        $dietaryRestrictions
+            .sink { [weak self] _ in
+                self?.clearAnalysisCache()
+                self?.persistState()
+            }
+            .store(in: &cancellables)
         $goals
             .sink { [weak self] _ in self?.persistState(includeWidgetSnapshot: true) }
             .store(in: &cancellables)
@@ -2215,6 +2302,7 @@ final class AppStore: ObservableObject {
         persistence.save(
             PersistedAppState(
                 selectedDiet: selectedDiet,
+                dietaryRestrictions: dietaryRestrictions,
                 goals: goals,
                 cachedProducts: cachedProducts,
                 favoriteProductKeys: Array(favoriteProductKeys),
@@ -2306,7 +2394,9 @@ final class AppStore: ObservableObject {
     }
 
     private func analysisCacheKey(for product: Product) -> String {
-        "\(selectedDiet.rawValue)|\(product.id)|\(product.lastUpdatedAt.timeIntervalSince1970)"
+        let dietKey = selectedDiet?.rawValue ?? "none"
+        let restrictionKey = dietaryRestrictions.map(\.rawValue).sorted().joined(separator: ",")
+        return "\(dietKey)|\(restrictionKey)|\(product.id)|\(product.lastUpdatedAt.timeIntervalSince1970)"
     }
 
     private func trimCachedProductsIfNeeded() {

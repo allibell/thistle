@@ -13,6 +13,102 @@ struct RatingBadge: View {
     }
 }
 
+struct RatingExplanationView: View {
+    var analysis: ProductAnalysis
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Why this rating")
+                    .font(.headline)
+                Spacer()
+                RatingBadge(rating: analysis.rating)
+            }
+
+            Text(analysis.summary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            if analysis.flags.isEmpty {
+                Label(
+                    analysis.rating == .yellow ? "The explanation above is the recorded reason; no ingredient-specific flags were recorded." : "No specific ingredient concerns were recorded.",
+                    systemImage: analysis.rating == .yellow ? "questionmark.circle" : "checkmark.circle"
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            } else {
+                ForEach(analysis.flags) { flag in
+                    HStack(alignment: .top, spacing: 10) {
+                        Circle()
+                            .fill(flag.severity.color)
+                            .frame(width: 9, height: 9)
+                            .padding(.top, 5)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(flag.ingredient)
+                                .font(.subheadline.weight(flag.severity.fontWeight))
+                                .foregroundStyle(flag.severity.color)
+                            Text(flag.reason)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
+    }
+}
+
+struct FoodComponentTreeView: View {
+    var components: [FoodItemComponent]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("What’s in it")
+                .font(.headline)
+            ForEach(components) { component in
+                FoodComponentRow(component: component)
+            }
+        }
+        .padding()
+        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
+    }
+}
+
+private struct FoodComponentRow: View {
+    var component: FoodItemComponent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: component.components.isEmpty ? "circle.fill" : "square.stack.3d.up.fill")
+                    .font(component.components.isEmpty ? .system(size: 7) : .caption)
+                    .foregroundStyle(component.analysis.rating.color)
+                    .frame(width: 16, height: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(component.title)
+                        .font(.subheadline.weight(.semibold))
+                    Text("\(component.servingText) · \(component.nutrition.calories) cal")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(component.analysis.summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                RatingBadge(rating: component.analysis.rating)
+                    .scaleEffect(0.82, anchor: .topTrailing)
+            }
+
+            if !component.components.isEmpty {
+                FoodComponentTreeView(components: component.components)
+                    .padding(.leading, 16)
+            }
+        }
+    }
+}
+
 struct MacroSummaryView: View {
     var nutrition: NutritionFacts
 
