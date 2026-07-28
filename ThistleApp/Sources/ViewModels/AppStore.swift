@@ -49,6 +49,7 @@ final class AppStore: ObservableObject {
     }
     @Published var usageCounts: [String: Int] = [:]
     @Published var favoriteImportJobs: [FavoriteImportJob] = []
+    @Published private(set) var rememberedMealEstimates: [RememberedMealEstimate] = []
 
     @Published var selectedStoreFilter = "All Stores"
     @Published var onlyShowCompatible = false
@@ -99,6 +100,8 @@ final class AppStore: ObservableObject {
     private var localIndexSyncTask: Task<Void, Never>?
     private var semanticRankingTask: Task<Void, Never>?
     private var remoteSearchTask: Task<Void, Never>?
+    private var persistenceTask: Task<Void, Never>?
+    private var pendingWidgetSnapshot = false
     private let searchLogger = Logger(subsystem: "com.allibell.thistle", category: "search")
 
     init(
@@ -122,6 +125,7 @@ final class AppStore: ObservableObject {
             barcodeCache = state.barcodeCache
             deepSearchCache = state.deepSearchCache
             favoriteImportJobs = state.favoriteImportJobs
+            rememberedMealEstimates = state.rememberedMealEstimates
         }
         rebuildRecentLoggedProductIDs()
         pruneExpiredCaches()
@@ -207,8 +211,13 @@ final class AppStore: ObservableObject {
     }
 
     private func rankedProducts(_ products: [Product], limit: Int? = nil) -> [Product] {
+        let context = ProductRankingContext(
+            isActiveSearch: !activeSearchQuery.isEmpty,
+            normalizedQuery: normalizedComparableText(activeSearchQuery),
+            queryTerms: normalizedTerms(for: activeSearchQuery)
+        )
         let ranked = products
-            .map { (product: $0, score: combinedRankingScore(for: $0)) }
+            .map { (product: $0, score: combinedRankingScore(for: $0, context: context)) }
             .sorted { lhs, rhs in
                 if lhs.score == rhs.score {
                     return lhs.product.lastUpdatedAt > rhs.product.lastUpdatedAt
@@ -284,14 +293,7 @@ final class AppStore: ObservableObject {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let started = Date.now
         logSearch("Search submit: '\(trimmed)'")
-        activeSearchQuery = trimmed
-        hasSubmittedSearch = true
-        searchError = nil
-        deepSearchResult = nil
-        remoteSearchResults = []
-        localIndexedResults = []
-        semanticRankingTask?.cancel()
-        semanticRankingScores = [:]
+        prepareLocalSearch(for: trimmed, clearRemoteResults: false)
 
         guard !trimmed.isEmpty else {
             isSearching = false
@@ -304,23 +306,8 @@ final class AppStore: ObservableObject {
         remoteSearchTask?.cancel()
         remoteSearchTask = nil
 
-        // Immediate in-memory pass keeps search responsive while indexed/fuzzy lookups catch up.
-        let normalizedLocalCandidates = quickLocalCandidates(for: trimmed, limit: maxSearchResults)
-        localIndexedResults = normalizedLocalCandidates
-        scheduleSemanticRanking(for: trimmed, candidates: Array(normalizedLocalCandidates.prefix(30)))
+        let normalizedLocalCandidates = localIndexedResults
         logSearch("Local snapshot: \(normalizedLocalCandidates.count) candidates in \(Date.now.timeIntervalSince(started).formatted(.number.precision(.fractionLength(3))))s")
-
-        let maxResults = maxSearchResults
-        Task(priority: .utility) { [localSearchIndex] in
-            let indexed = await localSearchIndex.searchProducts(matching: trimmed, limit: maxResults)
-            await MainActor.run {
-                guard self.activeSearchQuery == trimmed else { return }
-                let normalizedIndexed = self.deduplicatedProductsByID(indexed.map(self.withInferredStores))
-                self.localIndexedResults = normalizedIndexed
-                self.scheduleSemanticRanking(for: trimmed, candidates: normalizedIndexed + self.remoteSearchResults)
-                self.logSearch("Indexed local search: \(normalizedIndexed.count) candidates")
-            }
-        }
 
         let cacheKey = normalizedSearchKey(for: trimmed)
         if let cached = searchCache[cacheKey], isFresh(cached.cachedAt, ttl: catalogCacheTTL) {
@@ -351,6 +338,46 @@ final class AppStore: ObservableObject {
                 cacheKey: cacheKey,
                 startedAt: started
             )
+        }
+    }
+
+    /// Updates cached/history results without touching the network. SearchView calls this while
+    /// the user types so useful results appear immediately; explicit submit performs the refresh.
+    func prepareLocalSearch(for rawQuery: String? = nil, clearRemoteResults: Bool = true) {
+        let trimmed = (rawQuery ?? query).trimmingCharacters(in: .whitespacesAndNewlines)
+        activeSearchQuery = trimmed
+        hasSubmittedSearch = !trimmed.isEmpty
+        searchError = nil
+        deepSearchResult = nil
+        semanticRankingTask?.cancel()
+        semanticRankingScores = [:]
+
+        guard !trimmed.isEmpty else {
+            localIndexedResults = []
+            if clearRemoteResults { remoteSearchResults = [] }
+            return
+        }
+
+        if clearRemoteResults {
+            remoteSearchTask?.cancel()
+            remoteSearchTask = nil
+            isSearching = false
+            remoteSearchResults = []
+        }
+
+        let immediate = quickLocalCandidates(for: trimmed, limit: maxSearchResults)
+        localIndexedResults = immediate
+        scheduleSemanticRanking(for: trimmed, candidates: Array(immediate.prefix(30)))
+
+        let maxResults = maxSearchResults
+        Task(priority: .utility) { [localSearchIndex] in
+            let indexed = await localSearchIndex.searchProducts(matching: trimmed, limit: maxResults)
+            await MainActor.run {
+                guard self.activeSearchQuery == trimmed else { return }
+                let normalized = self.deduplicatedProductsByID(indexed.map(self.withInferredStores))
+                self.localIndexedResults = normalized
+                self.scheduleSemanticRanking(for: trimmed, candidates: normalized + self.remoteSearchResults)
+            }
         }
     }
 
@@ -395,7 +422,9 @@ final class AppStore: ObservableObject {
         defer { isLookingUpBarcode = false }
 
         do {
-            let fetched = try await catalogService.product(forBarcode: trimmed)
+            let fetched = try await withTimeout(seconds: 7) { [catalogService] in
+                try await catalogService.product(forBarcode: trimmed)
+            }
             let normalizedFetched = fetched.map(withInferredStores)
             for variant in variants {
                 barcodeCache[variant] = CachedProductValue(product: normalizedFetched, cachedAt: .now)
@@ -407,6 +436,8 @@ final class AppStore: ObservableObject {
             } else {
                 barcodeLookupError = "No product found for barcode \(trimmed)."
             }
+        } catch is SearchTimeoutError {
+            barcodeLookupError = "Barcode lookup timed out. Try again or add the product manually."
         } catch {
             barcodeLookupError = error.localizedDescription
         }
@@ -453,7 +484,23 @@ final class AppStore: ObservableObject {
     }
 
     func runDefaultSearchPerfProbe() async {
-        let queries = ["avocado", "salmon", "trader joe eggs", "almond malk", "spinach", "zucchini"]
+        remoteSearchTask?.cancel()
+        remoteSearchTask = nil
+        isSearching = false
+
+        var seenQueries: Set<String> = []
+        let queries = ([activeSearchQuery] + localCatalog.map { product in
+            [product.brand, product.name]
+                .filter { !$0.isEmpty && $0 != "Unknown Brand" }
+                .joined(separator: " ")
+        })
+        .compactMap { candidate -> String? in
+            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = normalizedComparableText(trimmed)
+            guard !key.isEmpty, seenQueries.insert(key).inserted else { return nil }
+            return trimmed
+        }
+        .prefix(6)
         appendPerfLog("Starting perf probe for \(queries.count) queries.", category: "Probe")
         let overallStart = Date.now
 
@@ -658,6 +705,10 @@ final class AppStore: ObservableObject {
 
     func setMacroPercents(protein: Int, carbs: Int, fat: Int) {
         goals.setMacroPercents(protein: protein, carbs: carbs, fat: fat)
+    }
+
+    func applyNutritionGoalPreset(_ preset: NutritionGoalPreset) {
+        preset.apply(to: &goals)
     }
 
     func saveMeal(name: String, selections: [String: Double], availableProducts: [Product]? = nil) {
@@ -875,7 +926,7 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func log(product: Product, servings: Double = 1) {
+    func log(product: Product, servings: Double = 1, loggedAt: Date = .now) {
         let nutrition = product.nutrition * servings
         let roundedBaseServing = roundedNumericText(in: product.servingDescription)
         let roundedServingText = servings == 1
@@ -891,7 +942,7 @@ final class AppStore: ObservableObject {
                 baseServingDescription: roundedBaseServing,
                 nutrition: nutrition,
                 analysis: analysis(for: product),
-                loggedAt: .now
+                loggedAt: loggedAt
             ),
             at: 0
         )
@@ -917,6 +968,141 @@ final class AppStore: ObservableObject {
         for component in meal.components {
             usageCounts[component.product.id, default: 0] += 1
         }
+    }
+
+    func logQuickEstimate(
+        title: String,
+        nutrition: NutritionFacts,
+        loggedAt: Date = .now
+    ) {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        loggedFoods.insert(
+            LoggedFood(
+                title: trimmedTitle.isEmpty ? "Quick estimate" : trimmedTitle,
+                servingText: "Estimated meal",
+                sourceProductIDs: [],
+                nutrition: nutrition,
+                analysis: ProductAnalysis(
+                    rating: .yellow,
+                    summary: "Quick estimate — edit or replace when more accurate information is available.",
+                    flags: []
+                ),
+                loggedAt: loggedAt
+            ),
+            at: 0
+        )
+        rememberMealEstimate(description: trimmedTitle, nutrition: nutrition)
+    }
+
+    func quickMealEstimate(description: String) -> NutritionInferenceEstimate? {
+        let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let requestedCalories = explicitCalories(in: trimmed)
+        let parsedIngredients = parseDelimitedValues(trimmed)
+
+        if let remembered = rememberedMealEstimate(matching: trimmed) {
+            return NutritionInferenceEstimate(
+                nutrition: scaled(remembered.nutrition, toCalories: requestedCalories),
+                servingDescription: "remembered meal",
+                ingredients: [],
+                sourceSummary: "Remembered from your previous correction."
+            )
+        }
+
+        if let local = localNutritionInferenceCandidate(title: trimmed, ingredients: parsedIngredients) {
+            let nutrition = scaled(local.nutrition, toCalories: requestedCalories)
+            return NutritionInferenceEstimate(
+                nutrition: nutrition,
+                servingDescription: "estimated meal",
+                ingredients: local.ingredients,
+                sourceSummary: requestedCalories == nil
+                    ? "Matched a similar food in your library. Check the portion before logging."
+                    : "Matched a similar food and scaled it to \(requestedCalories!) calories."
+            )
+        }
+
+        if let componentEstimate = commonFoodComponentEstimate(for: trimmed) {
+            return NutritionInferenceEstimate(
+                nutrition: scaled(componentEstimate.nutrition, toCalories: requestedCalories),
+                servingDescription: "estimated meal",
+                ingredients: componentEstimate.ingredients,
+                sourceSummary: componentEstimate.summary
+            )
+        }
+
+        if let heuristic = heuristicNutritionEstimate(for: trimmed) {
+            return NutritionInferenceEstimate(
+                nutrition: scaled(heuristic.nutrition, toCalories: requestedCalories),
+                servingDescription: heuristic.servingDescription,
+                ingredients: heuristic.ingredients,
+                sourceSummary: requestedCalories == nil
+                    ? heuristic.sourceSummary
+                    : "Used a typical meal profile and scaled it to \(requestedCalories!) calories."
+            )
+        }
+
+        let calories = requestedCalories ?? 500
+        return NutritionInferenceEstimate(
+            nutrition: macroBalancedEstimate(calories: calories),
+            servingDescription: "estimated meal",
+            ingredients: [],
+            sourceSummary: requestedCalories == nil
+                ? "Started with a generic 500-calorie mixed meal. Adjust anything that looks off."
+                : "Estimated macros from the stated calories. Adjust anything that looks off."
+        )
+    }
+
+    func rememberedEstimateSuggestions(matching query: String = "", limit: Int = 6) -> [RememberedMealEstimate] {
+        let normalizedQuery = normalizedComparableText(query)
+        return rememberedMealEstimates
+            .filter { normalizedQuery.isEmpty || $0.normalizedDescription.contains(normalizedQuery) }
+            .sorted {
+                if $0.useCount == $1.useCount { return $0.updatedAt > $1.updatedAt }
+                return $0.useCount > $1.useCount
+            }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    func localProductSuggestions(matching query: String, limit: Int = 12) -> [Product] {
+        let context = ProductRankingContext(
+            isActiveSearch: true,
+            normalizedQuery: normalizedComparableText(query),
+            queryTerms: normalizedTerms(for: query)
+        )
+        return quickLocalCandidates(for: query, limit: limit * 2)
+            .map { product in
+                var score = combinedRankingScore(for: product, context: context)
+                if isFavorite(product) { score += 90 }
+                if recentLoggedProductIDs.contains(product.id) { score += 50 }
+                score += usageCounts[product.id, default: 0] * 5
+                return (product, score)
+            }
+            .sorted {
+                if $0.1 == $1.1 { return $0.0.lastUpdatedAt > $1.0.lastUpdatedAt }
+                return $0.1 > $1.1
+            }
+            .prefix(limit)
+            .map(\.0)
+    }
+
+    func onlineProductSuggestions(matching query: String, limit: Int = 18) async throws -> [Product] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else { return [] }
+        let cacheKey = normalizedSearchKey(for: trimmed)
+        if let cached = searchCache[cacheKey], isFresh(cached.cachedAt, ttl: catalogCacheTTL) {
+            return Array(cached.products.map(withInferredStores).prefix(limit))
+        }
+
+        let products = try await withTimeout(seconds: 6) { [catalogService] in
+            try await catalogService.searchProducts(matching: trimmed)
+        }
+        let normalized = products.map(withInferredStores)
+        searchCache[cacheKey] = CachedProductList(products: normalized, cachedAt: .now)
+        mergeIntoCache(Array(normalized.prefix(limit)))
+        persistState()
+        return Array(normalized.prefix(limit))
     }
 
     private func importWholeFoodsOrderFavorites(payload: String) async -> FavoriteImportRunResult {
@@ -1180,25 +1366,136 @@ final class AppStore: ObservableObject {
         )
     }
 
-    private func storeAliases(for normalizedStore: String) -> [String] {
-        switch normalizedStore {
-        case "whole foods", "whole foods market":
-            return ["whole foods", "whole foods market", "wholefoods"]
-        case "trader joes", "trader joe s":
-            return ["trader joes", "trader joe s", "trader joe"]
-        case "sprouts", "sprouts farmers market":
-            return ["sprouts", "sprouts farmers market"]
-        default:
-            return [normalizedStore]
+    private struct CommonFoodEstimate {
+        var aliases: [String]
+        var name: String
+        var nutrition: NutritionFacts
+    }
+
+    private var commonFoodEstimates: [CommonFoodEstimate] {
+        [
+            CommonFoodEstimate(aliases: ["egg", "eggs"], name: "egg", nutrition: NutritionFacts(calories: 72, protein: 6.3, carbs: 0.4, fat: 4.8)),
+            CommonFoodEstimate(aliases: ["toast", "bread"], name: "toast", nutrition: NutritionFacts(calories: 90, protein: 3.5, carbs: 17, fat: 1.2, fiber: 1.5)),
+            CommonFoodEstimate(aliases: ["butter"], name: "butter", nutrition: NutritionFacts(calories: 102, protein: 0.1, carbs: 0, fat: 11.5)),
+            CommonFoodEstimate(aliases: ["chicken breast", "chicken"], name: "chicken breast", nutrition: NutritionFacts(calories: 165, protein: 31, carbs: 0, fat: 3.6)),
+            CommonFoodEstimate(aliases: ["salmon"], name: "salmon", nutrition: NutritionFacts(calories: 206, protein: 22, carbs: 0, fat: 12)),
+            CommonFoodEstimate(aliases: ["rice"], name: "rice", nutrition: NutritionFacts(calories: 205, protein: 4.3, carbs: 45, fat: 0.4, fiber: 0.6)),
+            CommonFoodEstimate(aliases: ["broccoli"], name: "broccoli", nutrition: NutritionFacts(calories: 55, protein: 3.7, carbs: 11, fat: 0.6, fiber: 5.1)),
+            CommonFoodEstimate(aliases: ["avocado"], name: "avocado", nutrition: NutritionFacts(calories: 120, protein: 1.5, carbs: 6.4, fat: 11, fiber: 5)),
+            CommonFoodEstimate(aliases: ["banana"], name: "banana", nutrition: NutritionFacts(calories: 105, protein: 1.3, carbs: 27, fat: 0.4, fiber: 3.1)),
+            CommonFoodEstimate(aliases: ["apple"], name: "apple", nutrition: NutritionFacts(calories: 95, protein: 0.5, carbs: 25, fat: 0.3, fiber: 4.4)),
+            CommonFoodEstimate(aliases: ["greek yogurt", "yogurt"], name: "Greek yogurt", nutrition: NutritionFacts(calories: 130, protein: 17, carbs: 8, fat: 4)),
+            CommonFoodEstimate(aliases: ["oatmeal", "oats"], name: "oatmeal", nutrition: NutritionFacts(calories: 154, protein: 5.4, carbs: 27, fat: 2.6, fiber: 4)),
+            CommonFoodEstimate(aliases: ["olive oil", "oil"], name: "oil", nutrition: NutritionFacts(calories: 119, protein: 0, carbs: 0, fat: 13.5)),
+            CommonFoodEstimate(aliases: ["cheese"], name: "cheese", nutrition: NutritionFacts(calories: 113, protein: 7, carbs: 0.9, fat: 9.3)),
+            CommonFoodEstimate(aliases: ["tortilla"], name: "tortilla", nutrition: NutritionFacts(calories: 140, protein: 4, carbs: 24, fat: 4)),
+            CommonFoodEstimate(aliases: ["black beans", "beans"], name: "beans", nutrition: NutritionFacts(calories: 114, protein: 7.6, carbs: 20, fat: 0.5, fiber: 7.5))
+        ]
+    }
+
+    private func commonFoodComponentEstimate(for description: String) -> (nutrition: NutritionFacts, ingredients: [String], summary: String)? {
+        let normalized = normalizedComparableText(description)
+        var total = NutritionFacts.zero
+        var matched: [String] = []
+
+        for food in commonFoodEstimates {
+            guard let alias = food.aliases.first(where: { containsWholePhrase($0, in: normalized) }) else { continue }
+            let servings = estimatedCount(before: alias, in: normalized)
+            total = total + (food.nutrition * servings)
+            matched.append(servings == 1 ? food.name : "\(servings.formatted(.number.precision(.fractionLength(0)))) \(food.name)")
         }
+
+        guard !matched.isEmpty else { return nil }
+        return (
+            total,
+            matched,
+            "Built a rough estimate from typical portions of \(matched.joined(separator: ", "))."
+        )
+    }
+
+    private func containsWholePhrase(_ phrase: String, in text: String) -> Bool {
+        text.range(of: "\\b\(NSRegularExpression.escapedPattern(for: phrase))s?\\b", options: .regularExpression) != nil
+    }
+
+    private func estimatedCount(before phrase: String, in text: String) -> Double {
+        let escaped = NSRegularExpression.escapedPattern(for: phrase)
+        let pattern = "(?:^|\\s)(one|two|three|four|[1-4])\\s+(?:large\\s+|small\\s+)?\(escaped)s?\\b"
+        guard let range = text.range(of: pattern, options: .regularExpression) else { return 1 }
+        let match = String(text[range])
+        if match.contains("two") || match.range(of: "\\b2\\b", options: .regularExpression) != nil { return 2 }
+        if match.contains("three") || match.range(of: "\\b3\\b", options: .regularExpression) != nil { return 3 }
+        if match.contains("four") || match.range(of: "\\b4\\b", options: .regularExpression) != nil { return 4 }
+        return 1
+    }
+
+    private func explicitCalories(in text: String) -> Int? {
+        let patterns = [#"(?i)\b(\d{2,4})\s*(?:calories|calorie|kcal|cal)\b"#, #"(?i)\b(?:calories|calorie|kcal)\s*[:=]?\s*(\d{2,4})\b"#]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                  let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+                  let range = Range(match.range(at: 1), in: text),
+                  let calories = Int(text[range]) else { continue }
+            return calories
+        }
+        return nil
+    }
+
+    private func scaled(_ nutrition: NutritionFacts, toCalories target: Int?) -> NutritionFacts {
+        guard let target, nutrition.calories > 0 else { return nutrition }
+        return nutrition * (Double(target) / Double(nutrition.calories))
+    }
+
+    private func macroBalancedEstimate(calories: Int) -> NutritionFacts {
+        NutritionFacts(
+            calories: calories,
+            protein: Double(calories) * 0.25 / 4,
+            carbs: Double(calories) * 0.45 / 4,
+            fat: Double(calories) * 0.30 / 9
+        )
+    }
+
+    private func rememberedMealEstimate(matching description: String) -> RememberedMealEstimate? {
+        let key = normalizedComparableText(description)
+        guard !key.isEmpty else { return nil }
+        return rememberedMealEstimates.first { $0.normalizedDescription == key }
+    }
+
+    private func rememberMealEstimate(description: String, nutrition: NutritionFacts) {
+        let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = normalizedComparableText(trimmed)
+        guard !key.isEmpty, key != "quick estimate", key != "quick add" else { return }
+
+        if let index = rememberedMealEstimates.firstIndex(where: { $0.normalizedDescription == key }) {
+            rememberedMealEstimates[index].description = trimmed
+            rememberedMealEstimates[index].nutrition = nutrition
+            rememberedMealEstimates[index].useCount += 1
+            rememberedMealEstimates[index].updatedAt = .now
+        } else {
+            rememberedMealEstimates.append(
+                RememberedMealEstimate(
+                    description: trimmed,
+                    normalizedDescription: key,
+                    nutrition: nutrition
+                )
+            )
+        }
+
+        rememberedMealEstimates = rememberedMealEstimates
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .prefix(60)
+            .map { $0 }
+    }
+
+    private func storeAliases(for normalizedStore: String) -> [String] {
+        let compact = normalizedStore.replacingOccurrences(of: " ", with: "")
+        return compact == normalizedStore ? [normalizedStore] : [normalizedStore, compact]
     }
 
     private func matchesSearchQuery(_ product: Product) -> Bool {
         let trimmed = activeSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return true }
 
-        let parsedQuery = parseSearchQuery(trimmed)
-        let queryTerms = parsedQuery.requiredTerms
+        let queryTerms = normalizedTerms(for: trimmed)
         guard !queryTerms.isEmpty else { return true }
 
         let nameTerms = Set(normalizedTerms(for: product.name))
@@ -1238,31 +1535,6 @@ final class AppStore: ObservableObject {
                 isFuzzyTokenMatch(query: term, candidate: candidate)
             }
         }
-    }
-
-    private func parseSearchQuery(_ rawQuery: String) -> (requiredTerms: [String], optionalStoreTerms: [String]) {
-        let terms = normalizedTerms(for: rawQuery)
-        let normalized = normalizedComparableText(rawQuery)
-        var optionalStoreTerms: Set<String> = []
-        var removableTerms: Set<String> = []
-
-        if normalized.contains("whole foods") || normalized.contains("wholefoods") {
-            optionalStoreTerms.formUnion(["whole", "foods", "wholefoods", "market", "wfm"])
-            removableTerms.formUnion(["whole", "foods", "wholefoods", "wfm"])
-        }
-
-        if normalized.contains("trader joe") || normalized.contains("traderjoes") {
-            optionalStoreTerms.formUnion(["trader", "joe", "joes", "traderjoe", "traderjoes"])
-            removableTerms.formUnion(["trader", "joe", "joes", "traderjoe", "traderjoes"])
-        }
-
-        if normalized.contains("sprouts") {
-            optionalStoreTerms.formUnion(["sprouts", "farmers", "market"])
-            removableTerms.formUnion(["sprouts"])
-        }
-
-        let required = terms.filter { !removableTerms.contains($0) }
-        return (required.isEmpty ? terms : required, Array(optionalStoreTerms))
     }
 
     private func normalizedTerms(for string: String) -> [String] {
@@ -1305,8 +1577,14 @@ final class AppStore: ObservableObject {
         return previousRow[rhsChars.count]
     }
 
-    private func combinedRankingScore(for product: Product) -> Int {
-        let isActiveSearch = !activeSearchQuery.isEmpty
+    private struct ProductRankingContext {
+        var isActiveSearch: Bool
+        var normalizedQuery: String
+        var queryTerms: [String]
+    }
+
+    private func combinedRankingScore(for product: Product, context: ProductRankingContext) -> Int {
+        let isActiveSearch = context.isActiveSearch
         let favoriteBoost = isActiveSearch ? 0 : (isFavorite(product) ? 80 : 0)
         let recentBoost = isActiveSearch ? 0 : (recentLoggedProductIDs.contains(product.id) ? 25 : 0)
         let usageBoost = isActiveSearch ? 0 : (usageCounts[product.id, default: 0] * 5)
@@ -1327,12 +1605,12 @@ final class AppStore: ObservableObject {
         }
 
         let queryBoost: Int
-        if activeSearchQuery.isEmpty {
+        if !isActiveSearch {
             queryBoost = 0
         } else {
             let normalizedName = normalizedComparableText(product.name)
             let normalizedBrand = normalizedComparableText(product.brand)
-            let trimmed = normalizedComparableText(activeSearchQuery)
+            let trimmed = context.normalizedQuery
             if normalizedName == trimmed || normalizedBrand == trimmed {
                 queryBoost = 50
             } else if normalizedName.contains(trimmed) || normalizedBrand.contains(trimmed) {
@@ -1341,8 +1619,9 @@ final class AppStore: ObservableObject {
                 let nameTerms = Set(normalizedTerms(for: normalizedName))
                 let brandTerms = Set(normalizedTerms(for: normalizedBrand))
                 let ingredientTerms = Set(normalizedTerms(for: normalizedComparableText(product.ingredients.joined(separator: " "))))
-                let parsedQuery = parseSearchQuery(activeSearchQuery)
-                let hits = parsedQuery.requiredTerms.reduce(into: 0) { partial, term in
+                let storeTerms = Set(normalizedTerms(for: normalizedComparableText(product.stores.joined(separator: " "))))
+                let queryTerms = context.queryTerms
+                let hits = queryTerms.reduce(into: 0) { partial, term in
                     if nameTerms.contains(term) {
                         partial += 10
                     } else if nameTerms.contains(where: { isFuzzyTokenMatch(query: term, candidate: $0) }) {
@@ -1360,9 +1639,15 @@ final class AppStore: ObservableObject {
                     } else if ingredientTerms.contains(where: { isFuzzyTokenMatch(query: term, candidate: $0) }) {
                         partial += 2
                     }
+
+                    if storeTerms.contains(term) {
+                        partial += 6
+                    } else if storeTerms.contains(where: { isFuzzyTokenMatch(query: term, candidate: $0) }) {
+                        partial += 5
+                    }
                 }
                 let singleTermAdjustment: Int
-                if parsedQuery.requiredTerms.count == 1, let term = parsedQuery.requiredTerms.first {
+                if queryTerms.count == 1, let term = queryTerms.first {
                     let normalizedNameContainsTerm = normalizedName.contains(term)
                     let normalizedBrandContainsTerm = normalizedBrand.contains(term)
                     let nameHasTerm = normalizedNameContainsTerm || nameTerms.contains(term)
@@ -1386,15 +1671,7 @@ final class AppStore: ObservableObject {
                 } else {
                     singleTermAdjustment = 0
                 }
-                let storeTerms = Set(normalizedTerms(for: normalizedComparableText(product.stores.joined(separator: " "))))
-                let storeHintHits = parsedQuery.optionalStoreTerms.reduce(into: 0) { partial, term in
-                    if storeTerms.contains(term) {
-                        partial += 3
-                    } else if storeTerms.contains(where: { isFuzzyTokenMatch(query: term, candidate: $0) }) {
-                        partial += 2
-                    }
-                }
-                queryBoost = hits + min(12, storeHintHits) + singleTermAdjustment
+                queryBoost = hits + singleTermAdjustment
             }
         }
 
@@ -1416,13 +1693,7 @@ final class AppStore: ObservableObject {
         if normalizedName.contains(" and ") || normalizedName.contains("&") || normalizedName.contains(",") {
             return true
         }
-
-        let compositeKeywords = [
-            "salad", "sandwich", "wrap", "pizza", "pasta", "bowl", "meal",
-            "waffle", "hummus", "guacamole", "dip", "soup", "quiche",
-            "tortelloni", "dhal", "burger", "sausage"
-        ]
-        return compositeKeywords.contains { normalizedName.contains($0) }
+        return normalizedTerms(for: normalizedName).count >= 3
     }
 
     private func deduplicatedProductsByID(_ products: [Product]) -> [Product] {
@@ -1922,9 +2193,24 @@ final class AppStore: ObservableObject {
         $favoriteImportJobs
             .sink { [weak self] _ in self?.persistState() }
             .store(in: &cancellables)
+        $rememberedMealEstimates
+            .sink { [weak self] _ in self?.persistState() }
+            .store(in: &cancellables)
     }
 
     private func persistState(includeWidgetSnapshot: Bool = false) {
+        pendingWidgetSnapshot = pendingWidgetSnapshot || includeWidgetSnapshot
+        persistenceTask?.cancel()
+        persistenceTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled else { return }
+            self?.flushPersistedState()
+        }
+    }
+
+    private func flushPersistedState() {
+        let includeWidgetSnapshot = pendingWidgetSnapshot
+        pendingWidgetSnapshot = false
         pruneExpiredCaches()
         persistence.save(
             PersistedAppState(
@@ -1938,7 +2224,8 @@ final class AppStore: ObservableObject {
                 searchCacheByQuery: searchCache,
                 barcodeCache: barcodeCache,
                 deepSearchCache: deepSearchCache,
-                favoriteImportJobs: favoriteImportJobs
+                favoriteImportJobs: favoriteImportJobs,
+                rememberedMealEstimates: rememberedMealEstimates
             ),
             includeWidgetSnapshot: includeWidgetSnapshot
         )
@@ -2406,11 +2693,6 @@ final class AppStore: ObservableObject {
 
     private func withInferredStores(_ product: Product) -> Product {
         var normalized = product
-        let inferred = inferredStoresFromBrandAndName(brand: product.brand, name: product.name)
-        if !inferred.isEmpty {
-            normalized.stores = Array(Set(normalized.stores + inferred)).sorted()
-        }
-
         if isGenericServingDescription(normalized.servingDescription),
            let inferredServing = inferredServingDescription(for: normalized) {
             normalized.servingDescription = inferredServing
@@ -2485,26 +2767,6 @@ final class AppStore: ObservableObject {
         let unit = String(input[unitRange]).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !quantity.isEmpty, !unit.isEmpty else { return nil }
         return (quantity, unit)
-    }
-
-    private func inferredStoresFromBrandAndName(brand: String, name: String) -> [String] {
-        let value = "\(brand) \(name)".lowercased()
-        var stores: [String] = []
-
-        if value.contains("trader joe") || value.contains("tj's") || value.contains("tjs") {
-            stores.append("Trader Joe's")
-        }
-        if value.contains("whole foods") || value.contains("365 by whole foods") || value.contains("365 organic") {
-            stores.append("Whole Foods")
-        }
-        if value.contains("kirkland") {
-            stores.append("Costco")
-        }
-        if value.contains("good & gather") || value.contains("market pantry") {
-            stores.append("Target")
-        }
-
-        return Array(Set(stores)).sorted()
     }
 
     private func roundedNumericText(in text: String) -> String {

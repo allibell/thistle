@@ -10,6 +10,7 @@ struct DiaryView: View {
     @State private var draftServingAmount = 1.0
     @State private var draftServingInput = "1"
     @State private var draftServingError: String?
+    @State private var showingQuickLog = false
 
     var body: some View {
         ScrollView {
@@ -19,6 +20,13 @@ struct DiaryView: View {
                     .onLongPressGesture(minimumDuration: 0.35) {
                         showingDatePicker = true
                     }
+                Button {
+                    showingQuickLog = true
+                } label: {
+                    Label("Open Food Logger", systemImage: "plus.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
                 progressSection
 
                 if selectedDayEntries.isEmpty {
@@ -33,6 +41,10 @@ struct DiaryView: View {
         }
         .background(ThistleTheme.canvas.ignoresSafeArea())
         .thistleNavigationTitle("Diary")
+        .sheet(isPresented: $showingQuickLog) {
+            QuickLogSheet(loggedAt: selectedDate)
+                .environmentObject(store)
+        }
         .sheet(item: $editingEntry) { entry in
             NavigationStack {
                 Form {
@@ -164,6 +176,10 @@ struct DiaryView: View {
                 Text("Other Nutrition Goals")
                     .font(.subheadline.weight(.semibold))
                 progressRow(metric: .fiber, current: selectedDayNutrition.fiber, goal: store.goals.fiber)
+                progressRow(metric: .iron, current: selectedDayNutrition.ironMg, goal: store.goals.ironMg)
+                progressRow(metric: .vitaminD, current: selectedDayNutrition.vitaminDMcg, goal: store.goals.vitaminDMcg)
+                progressRow(metric: .saturatedFat, current: selectedDayNutrition.saturatedFat, goal: store.goals.saturatedFatLimit)
+                progressRow(metric: .cholesterol, current: selectedDayNutrition.cholesterolMg, goal: store.goals.cholesterolLimitMg)
             }
         }
         .padding()
@@ -344,7 +360,7 @@ struct DiaryView: View {
     }
 
     private func progressTint(for metric: GoalMetric, current: Double, goal: Double) -> Color {
-        if metric == .calories, current > goal {
+        if metric.isUpperLimit, current > goal {
             return ThistleTheme.warning
         }
         return ThistleTheme.primaryGreen
@@ -357,6 +373,10 @@ struct DiaryView: View {
         case .carbs: return selectedDayNutrition.carbs
         case .fat: return selectedDayNutrition.fat
         case .fiber: return selectedDayNutrition.fiber
+        case .iron: return selectedDayNutrition.ironMg
+        case .vitaminD: return selectedDayNutrition.vitaminDMcg
+        case .saturatedFat: return selectedDayNutrition.saturatedFat
+        case .cholesterol: return selectedDayNutrition.cholesterolMg
         }
     }
 
@@ -367,6 +387,10 @@ struct DiaryView: View {
         case .carbs: return store.goals.carbs
         case .fat: return store.goals.fat
         case .fiber: return store.goals.fiber
+        case .iron: return store.goals.ironMg
+        case .vitaminD: return store.goals.vitaminDMcg
+        case .saturatedFat: return store.goals.saturatedFatLimit
+        case .cholesterol: return store.goals.cholesterolLimitMg
         }
     }
 }
@@ -377,6 +401,10 @@ private enum GoalMetric: String, Identifiable {
     case carbs
     case fat
     case fiber
+    case iron
+    case vitaminD
+    case saturatedFat
+    case cholesterol
 
     var id: String { rawValue }
 
@@ -387,6 +415,19 @@ private enum GoalMetric: String, Identifiable {
         case .carbs: return "Carbs"
         case .fat: return "Fat"
         case .fiber: return "Fiber"
+        case .iron: return "Iron"
+        case .vitaminD: return "Vitamin D"
+        case .saturatedFat: return "Saturated Fat"
+        case .cholesterol: return "Cholesterol"
+        }
+    }
+
+    var isUpperLimit: Bool {
+        switch self {
+        case .calories, .saturatedFat, .cholesterol:
+            return true
+        case .protein, .carbs, .fat, .fiber, .iron, .vitaminD:
+            return false
         }
     }
 
@@ -397,6 +438,10 @@ private enum GoalMetric: String, Identifiable {
         case .carbs: return nutrition.carbs
         case .fat: return nutrition.fat
         case .fiber: return nutrition.fiber
+        case .iron: return nutrition.ironMg
+        case .vitaminD: return nutrition.vitaminDMcg
+        case .saturatedFat: return nutrition.saturatedFat
+        case .cholesterol: return nutrition.cholesterolMg
         }
     }
 
@@ -404,8 +449,14 @@ private enum GoalMetric: String, Identifiable {
         switch self {
         case .calories:
             return Int(value.rounded()).formatted()
-        case .protein, .carbs, .fat, .fiber:
+        case .protein, .carbs, .fat, .fiber, .saturatedFat:
             return "\(value.formatted(.number.precision(.fractionLength(0...1))))g"
+        case .iron:
+            return "\(value.formatted(.number.precision(.fractionLength(0...1))))mg"
+        case .vitaminD:
+            return "\(value.formatted(.number.precision(.fractionLength(0...1))))mcg"
+        case .cholesterol:
+            return "\(value.formatted(.number.precision(.fractionLength(0...0))))mg"
         }
     }
 }

@@ -27,7 +27,11 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
             throw CatalogError.invalidQuery
         }
 
-        let variants = Array(queryVariants(for: trimmed).prefix(2))
+        if await OpenFoodFactsHealthGate.shared.shouldSkipRequests() {
+            return []
+        }
+
+        let variants = Array(queryVariants(for: trimmed).prefix(1))
         let aggregate = await parallelFetchOpenFoodFacts(variants: variants, maxProducts: 24)
 
         if aggregate.products.isEmpty, aggregate.encounteredNetworkError {
@@ -52,17 +56,28 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
                 group.addTask {
                     do {
                         let products = try await openFoodFacts.searchProducts(matching: variant)
-                        return VariantFetchResult(products: products, encounteredNetworkError: false)
+                        return VariantFetchResult(
+                            products: products,
+                            encounteredNetworkError: false,
+                            timedOut: false
+                        )
                     } catch {
-                        return VariantFetchResult(products: [], encounteredNetworkError: true)
+                        let timedOut = (error as? URLError)?.code == .timedOut
+                        return VariantFetchResult(
+                            products: [],
+                            encounteredNetworkError: true,
+                            timedOut: timedOut
+                        )
                     }
                 }
             }
 
             var aggregate: [Product] = []
             var encounteredNetworkError = false
+            var timedOut = false
             for await result in group {
                 encounteredNetworkError = encounteredNetworkError || result.encounteredNetworkError
+                timedOut = timedOut || result.timedOut
                 if !result.products.isEmpty {
                     aggregate += result.products
                     if aggregate.count >= maxProducts {
@@ -70,6 +85,12 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
                         break
                     }
                 }
+            }
+
+            if aggregate.isEmpty, encounteredNetworkError {
+                await OpenFoodFactsHealthGate.shared.recordFailure(timedOut: timedOut)
+            } else if !aggregate.isEmpty {
+                await OpenFoodFactsHealthGate.shared.recordSuccess()
             }
 
             return (Array(aggregate.prefix(maxProducts)), encounteredNetworkError)
@@ -86,29 +107,52 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
             }
         }
 
-        for variant in variants {
-            if let product = (try? await openFoodFacts.product(forBarcode: variant)) ?? nil {
-                await localIndex.upsert(products: [product])
-                return product
-            }
+        if let primary = variants.first,
+           let product = (try? await openFoodFacts.product(forBarcode: primary)) ?? nil {
+            await localIndex.upsert(products: [product])
+            return product
         }
 
-        for variant in variants {
-            if let product = (try? await upcItemDB.product(forBarcode: variant)) ?? nil {
-                await localIndex.upsert(products: [product])
-                return product
-            }
+        let fallbackVariants = Array(variants.dropFirst())
+        if let product = await firstBarcodeMatch(in: fallbackVariants, lookup: { variant in
+            try? await openFoodFacts.product(forBarcode: variant)
+        }) {
+            await localIndex.upsert(products: [product])
+            return product
+        }
+
+        if let product = await firstBarcodeMatch(in: variants, lookup: { variant in
+            try? await upcItemDB.product(forBarcode: variant)
+        }) {
+            await localIndex.upsert(products: [product])
+            return product
         }
 
         return nil
     }
 
-    private func queryVariants(for query: String) -> [String] {
-        let normalized = query.lowercased()
-        var variants: [String] = [query]
-        let ingredientIntent = isIngredientIntent(query)
+    private func firstBarcodeMatch(
+        in variants: [String],
+        lookup: @escaping @Sendable (String) async -> Product?
+    ) async -> Product? {
+        guard !variants.isEmpty else { return nil }
+        return await withTaskGroup(of: Product?.self) { group in
+            for variant in variants {
+                group.addTask { await lookup(variant) }
+            }
+            for await product in group {
+                if let product {
+                    group.cancelAll()
+                    return product
+                }
+            }
+            return nil
+        }
+    }
 
-        let terms = normalizedTerms(normalized)
+    private func queryVariants(for query: String) -> [String] {
+        var variants: [String] = [networkOptimizedQuery(from: query)]
+        let terms = normalizedTerms(query)
 
         if terms.count >= 2 {
             variants.append(terms.joined(separator: " "))
@@ -116,39 +160,6 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
 
         if terms.count >= 3 {
             variants.append("\(terms[0]) \(terms[1])")
-        }
-
-        if normalized.contains("malk"), !normalized.contains("milk") {
-            variants.append(query.replacingOccurrences(of: "malk", with: "malk milk", options: .caseInsensitive))
-            variants.append(query.replacingOccurrences(of: "malk", with: "malk organics", options: .caseInsensitive))
-        }
-
-        if normalized.contains("unsweetened"), normalized.contains("vanilla") {
-            variants.append(query.replacingOccurrences(of: "unsweetened", with: "", options: .caseInsensitive).replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespacesAndNewlines))
-            variants.append("\(query) almond milk")
-            variants.append("vanilla almond milk")
-        }
-
-        if normalized.contains("malk") {
-            variants.append("malk almond milk")
-            variants.append("malk vanilla almond milk")
-        }
-
-        if terms.contains(where: { $0 == "crisp" || $0 == "crisps" || $0 == "cracker" || $0 == "crackers" }) {
-            variants.append(terms.map { $0 == "crisps" ? "crisp" : $0 }.joined(separator: " "))
-            variants.append(terms.map { ($0 == "crisp" || $0 == "crisps") ? "crackers" : $0 }.joined(separator: " "))
-            variants.append(terms.map { ($0 == "cracker" || $0 == "crackers") ? "crisps" : $0 }.joined(separator: " "))
-        }
-
-        let genericTerms = terms.filter { !brandOrStoreNoiseTerms.contains($0) }
-        if genericTerms.count >= 2 {
-            variants.append(genericTerms.joined(separator: " "))
-        }
-
-        if ingredientIntent {
-            variants.append("\(query) raw")
-            variants.append("\(query) plain")
-            variants.append("\(query) unsalted")
         }
 
         let semantic = semanticTokens(query)
@@ -164,7 +175,19 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
                 guard !key.isEmpty else { return false }
                 return seen.insert(key).inserted
             }
-        return Array(unique.prefix(4))
+        return Array(unique.prefix(2))
+    }
+
+    private func networkOptimizedQuery(from query: String) -> String {
+        let stopTerms: Set<String> = [
+            "friendly", "diet", "compliant", "whole30", "paleo", "keto", "vegan",
+            "pescatarian", "best", "healthy"
+        ]
+        let terms = normalizedTerms(query).filter { !stopTerms.contains($0) }
+        if terms.isEmpty {
+            return query.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return terms.prefix(4).joined(separator: " ")
     }
 
     private func deduplicate(_ products: [Product]) -> [Product] {
@@ -202,15 +225,6 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
             score += 30
         }
 
-        if normalizedComparableText(product.brand).contains("trader joe"),
-           normalizedQuery.contains("trader joe") || normalizedQuery.contains("tj") {
-            score += 24
-        }
-
-        if isIngredientIntent(query) {
-            score += ingredientSimplicityScore(for: product, queryTerms: Set(queryTokens))
-        }
-
         return score
     }
 
@@ -237,14 +251,6 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
 
     private func canonicalToken(_ token: String) -> String {
         let normalized = token.lowercased()
-        if normalized == "tj" || normalized == "tjs" || normalized == "traderjoes" {
-            return "trader"
-        }
-        if normalized == "joes" || normalized == "joe" {
-            return "joe"
-        }
-        if normalized == "crisps" { return "crisp" }
-        if normalized == "crackers" { return "cracker" }
         if normalized.hasSuffix("ies"), normalized.count > 3 {
             return String(normalized.dropLast(3)) + "y"
         }
@@ -287,58 +293,40 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
         return previous[rhsChars.count]
     }
 
-    private func isIngredientIntent(_ query: String) -> Bool {
-        let terms = normalizedTerms(query)
-        guard !terms.isEmpty, terms.count <= 2 else { return false }
-        let dishTerms: Set<String> = [
-            "salad", "soup", "pizza", "sandwich", "tortelloni", "quiche", "lasagna",
-            "bowl", "meal", "wrap", "pasta", "dish", "recipe", "frozen", "prepared"
-        ]
-        return terms.allSatisfy { !dishTerms.contains($0) }
-    }
-
-    private func ingredientSimplicityScore(for product: Product, queryTerms: Set<String>) -> Int {
-        let nameTerms = Set(normalizedTerms(product.name))
-        let overlap = queryTerms.intersection(nameTerms).count
-        var score = overlap * 30
-
-        if overlap == queryTerms.count, !queryTerms.isEmpty {
-            score += 35
-        }
-
-        let normalizedName = product.name
-            .lowercased()
-            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedQuery = queryTerms.sorted().joined(separator: " ")
-        if normalizedName == normalizedQuery || normalizedName.hasPrefix(normalizedQuery + " ") {
-            score += 45
-        }
-
-        let dishSignals = [
-            "tortelloni", "quiche", "pizza", "salad", "meal", "prepared", "frozen",
-            "lasagna", "burrito", "sandwich", "soup", "dhal", "curry", "ricotta", "feta"
-        ]
-        for signal in dishSignals where normalizedName.contains(signal) {
-            score -= 45
-        }
-
-        if product.source == .usda {
-            score += 20
-        }
-
-        return score
-    }
 }
 
 private struct VariantFetchResult: Sendable {
     var products: [Product]
     var encounteredNetworkError: Bool
+    var timedOut: Bool
 }
 
-private let brandOrStoreNoiseTerms: Set<String> = [
-    "trader", "joe", "joes", "tj", "tjs", "market", "foods", "whole", "store"
-]
+private actor OpenFoodFactsHealthGate {
+    static let shared = OpenFoodFactsHealthGate()
+
+    private var consecutiveFailures = 0
+    private var cooldownUntil: Date?
+
+    func shouldSkipRequests(now: Date = .now) -> Bool {
+        if let cooldownUntil, cooldownUntil > now {
+            return true
+        }
+        cooldownUntil = nil
+        return false
+    }
+
+    func recordSuccess() {
+        consecutiveFailures = 0
+        cooldownUntil = nil
+    }
+
+    func recordFailure(timedOut: Bool) {
+        consecutiveFailures += 1
+        guard consecutiveFailures >= 2 else { return }
+        let cooldown: TimeInterval = timedOut ? 120 : 60
+        cooldownUntil = .now.addingTimeInterval(cooldown)
+    }
+}
 
 private struct OpenFoodFactsClient: Sendable {
     private let session: URLSession
@@ -359,7 +347,7 @@ private struct OpenFoodFactsClient: Sendable {
             URLQueryItem(name: "fields", value: fields)
         ]
         let request = request(for: components?.url)
-        let (data, _) = try await session.data(for: request)
+        let data = try await loadData(for: request, timeout: .seconds(4))
         let response = try JSONDecoder().decode(OpenFoodFactsSearchResponse.self, from: data)
         return response.products
             .compactMap { $0.asProduct() }
@@ -369,22 +357,41 @@ private struct OpenFoodFactsClient: Sendable {
         var components = URLComponents(url: baseURL.appending(path: "/api/v2/product/\(barcode)"), resolvingAgainstBaseURL: false)
         components?.queryItems = [URLQueryItem(name: "fields", value: fields)]
         let request = request(for: components?.url)
-        let (data, _) = try await session.data(for: request)
+        let data = try await loadData(for: request, timeout: .seconds(4))
         let response = try JSONDecoder().decode(OpenFoodFactsBarcodeResponse.self, from: data)
         return response.product?.asProduct()
+    }
+
+    private func loadData(for request: URLRequest, timeout: Duration) async throws -> Data {
+        try await withThrowingTaskGroup(of: Data.self) { group in
+            group.addTask { [session] in
+                let (data, _) = try await session.data(for: request)
+                return data
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw URLError(.timedOut)
+            }
+
+            guard let first = try await group.next() else {
+                throw URLError(.timedOut)
+            }
+            group.cancelAll()
+            return first
+        }
     }
 
     private func request(for url: URL?) -> URLRequest {
         var request = URLRequest(url: url ?? baseURL)
         request.setValue("Thistle/0.1 (personal nutrition app; contact: local-dev)", forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 5
+        request.timeoutInterval = 4
         return request
     }
 
     private static func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 5
-        configuration.timeoutIntervalForResource = 7
+        configuration.timeoutIntervalForRequest = 4
+        configuration.timeoutIntervalForResource = 6
         configuration.waitsForConnectivity = false
         return URLSession(configuration: configuration)
     }

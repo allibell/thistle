@@ -388,13 +388,31 @@ struct MacroGoals: Codable, Hashable {
     var carbs: Double
     var fat: Double
     var fiber: Double
+    var ironMg: Double
+    var vitaminDMcg: Double
+    var saturatedFatLimit: Double
+    var cholesterolLimitMg: Double
 
-    init(calories: Int, protein: Double, carbs: Double, fat: Double, fiber: Double = 28) {
+    init(
+        calories: Int,
+        protein: Double,
+        carbs: Double,
+        fat: Double,
+        fiber: Double = 28,
+        ironMg: Double = 18,
+        vitaminDMcg: Double = 20,
+        saturatedFatLimit: Double = 20,
+        cholesterolLimitMg: Double = 300
+    ) {
         self.calories = calories
         self.protein = protein
         self.carbs = carbs
         self.fat = fat
         self.fiber = fiber
+        self.ironMg = ironMg
+        self.vitaminDMcg = vitaminDMcg
+        self.saturatedFatLimit = saturatedFatLimit
+        self.cholesterolLimitMg = cholesterolLimitMg
     }
 
     static let `default` = MacroGoals(calories: 1800, protein: 120, carbs: 140, fat: 70, fiber: 28)
@@ -441,6 +459,10 @@ struct MacroGoals: Codable, Hashable {
         case carbs
         case fat
         case fiber
+        case ironMg
+        case vitaminDMcg
+        case saturatedFatLimit
+        case cholesterolLimitMg
     }
 
     init(from decoder: Decoder) throws {
@@ -450,6 +472,51 @@ struct MacroGoals: Codable, Hashable {
         carbs = try container.decodeIfPresent(Double.self, forKey: .carbs) ?? 140
         fat = try container.decodeIfPresent(Double.self, forKey: .fat) ?? 70
         fiber = try container.decodeIfPresent(Double.self, forKey: .fiber) ?? 28
+        ironMg = try container.decodeIfPresent(Double.self, forKey: .ironMg) ?? 18
+        vitaminDMcg = try container.decodeIfPresent(Double.self, forKey: .vitaminDMcg) ?? 20
+        saturatedFatLimit = try container.decodeIfPresent(Double.self, forKey: .saturatedFatLimit) ?? 20
+        cholesterolLimitMg = try container.decodeIfPresent(Double.self, forKey: .cholesterolLimitMg) ?? 300
+    }
+}
+
+enum NutritionGoalPreset: String, CaseIterable, Identifiable {
+    case higherIron = "Higher Iron"
+    case higherVitaminD = "Higher Vitamin D"
+    case higherFiber = "Higher Fiber"
+    case lowerSaturatedFat = "Lower Saturated Fat"
+    case lipidSupport = "LDL/ApoB Support"
+
+    var id: String { rawValue }
+
+    var summary: String {
+        switch self {
+        case .higherIron:
+            return "Raises the daily iron target while keeping other goals unchanged."
+        case .higherVitaminD:
+            return "Raises the daily vitamin D target."
+        case .higherFiber:
+            return "Raises the daily fiber target for a more fiber-forward day."
+        case .lowerSaturatedFat:
+            return "Tightens the saturated fat ceiling."
+        case .lipidSupport:
+            return "Combines higher fiber with a lower saturated fat ceiling."
+        }
+    }
+
+    func apply(to goals: inout MacroGoals) {
+        switch self {
+        case .higherIron:
+            goals.ironMg = max(goals.ironMg, 27)
+        case .higherVitaminD:
+            goals.vitaminDMcg = max(goals.vitaminDMcg, 25)
+        case .higherFiber:
+            goals.fiber = max(goals.fiber, 38)
+        case .lowerSaturatedFat:
+            goals.saturatedFatLimit = min(goals.saturatedFatLimit, 13)
+        case .lipidSupport:
+            goals.fiber = max(goals.fiber, 35)
+            goals.saturatedFatLimit = min(goals.saturatedFatLimit, 13)
+        }
     }
 }
 
@@ -571,6 +638,31 @@ struct SavedMeal: Identifiable, Hashable, Codable {
     }
 }
 
+struct RememberedMealEstimate: Identifiable, Hashable, Codable {
+    var id: String
+    var description: String
+    var normalizedDescription: String
+    var nutrition: NutritionFacts
+    var useCount: Int
+    var updatedAt: Date
+
+    init(
+        id: String = UUID().uuidString,
+        description: String,
+        normalizedDescription: String,
+        nutrition: NutritionFacts,
+        useCount: Int = 1,
+        updatedAt: Date = .now
+    ) {
+        self.id = id
+        self.description = description
+        self.normalizedDescription = normalizedDescription
+        self.nutrition = nutrition
+        self.useCount = useCount
+        self.updatedAt = updatedAt
+    }
+}
+
 struct PersistedAppState: Codable {
     var selectedDiet: DietProfile
     var goals: MacroGoals
@@ -583,6 +675,7 @@ struct PersistedAppState: Codable {
     var barcodeCache: [String: CachedProductValue]
     var deepSearchCache: [String: CachedProductValue]
     var favoriteImportJobs: [FavoriteImportJob]
+    var rememberedMealEstimates: [RememberedMealEstimate]
 
     init(
         selectedDiet: DietProfile,
@@ -595,7 +688,8 @@ struct PersistedAppState: Codable {
         searchCacheByQuery: [String: CachedProductList] = [:],
         barcodeCache: [String: CachedProductValue] = [:],
         deepSearchCache: [String: CachedProductValue] = [:],
-        favoriteImportJobs: [FavoriteImportJob] = []
+        favoriteImportJobs: [FavoriteImportJob] = [],
+        rememberedMealEstimates: [RememberedMealEstimate] = []
     ) {
         self.selectedDiet = selectedDiet
         self.goals = goals
@@ -608,6 +702,7 @@ struct PersistedAppState: Codable {
         self.barcodeCache = barcodeCache
         self.deepSearchCache = deepSearchCache
         self.favoriteImportJobs = favoriteImportJobs
+        self.rememberedMealEstimates = rememberedMealEstimates
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -622,6 +717,7 @@ struct PersistedAppState: Codable {
         case barcodeCache
         case deepSearchCache
         case favoriteImportJobs
+        case rememberedMealEstimates
     }
 
     init(from decoder: Decoder) throws {
@@ -637,6 +733,7 @@ struct PersistedAppState: Codable {
         barcodeCache = try container.decodeIfPresent([String: CachedProductValue].self, forKey: .barcodeCache) ?? [:]
         deepSearchCache = try container.decodeIfPresent([String: CachedProductValue].self, forKey: .deepSearchCache) ?? [:]
         favoriteImportJobs = try container.decodeIfPresent([FavoriteImportJob].self, forKey: .favoriteImportJobs) ?? []
+        rememberedMealEstimates = try container.decodeIfPresent([RememberedMealEstimate].self, forKey: .rememberedMealEstimates) ?? []
     }
 }
 

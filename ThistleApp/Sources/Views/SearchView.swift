@@ -15,13 +15,18 @@ struct SearchView: View {
     @State private var showAllDebugLogEntries = false
     @State private var showPerfDebugEntries = false
     @State private var isRunningPerfProbe = false
+    @State private var perfProbeTask: Task<Void, Never>?
+    @State private var localSearchTask: Task<Void, Never>?
     @State private var perfCopiedConfirmation = false
+    @State private var showingMoreFilters = false
 
     var body: some View {
+        let submittedContext = submittedSearchContext
+
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 filters
-                searchActions
+                searchActions(resultCount: submittedContext.resultCount)
 
                 if store.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !store.favoriteProducts.isEmpty {
                     favoritesSection
@@ -51,7 +56,7 @@ struct SearchView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if store.hasSubmittedSearch && !hasAnySubmittedProductSection && !store.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if store.hasSubmittedSearch && !submittedContext.hasAnyProductSection && !store.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     noResultsActions
                 }
 
@@ -59,10 +64,8 @@ struct SearchView: View {
                     debugSection
                 }
 
-                perfSection
-
                 if shouldShowCommittedResults {
-                    committedResultSections
+                    committedResultSections(context: submittedContext)
                 }
             }
             .padding()
@@ -81,17 +84,30 @@ struct SearchView: View {
         }
         .searchable(text: $store.query, prompt: "Products, brands, ingredients")
         .onSubmit(of: .search) {
+            cancelPerfProbeIfRunning()
             Task { await store.performSearch() }
         }
         .onChange(of: store.query) { _, newValue in
+            localSearchTask?.cancel()
             if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 store.clearSearch()
                 searchResultLimit = 20
                 recentHistoryLimit = 4
                 favoritesLimit = 4
             } else {
-                store.hasSubmittedSearch = false
+                localSearchTask = Task {
+                    try? await Task.sleep(for: .milliseconds(120))
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run {
+                        store.prepareLocalSearch(for: newValue)
+                        searchResultLimit = 20
+                    }
+                }
             }
+        }
+        .onDisappear {
+            cancelPerfProbeIfRunning()
+            localSearchTask?.cancel()
         }
         .sheet(isPresented: $showingAddProductSheet) {
             ProductEntrySheet(
@@ -124,20 +140,19 @@ struct SearchView: View {
             }
             .pickerStyle(.segmented)
 
-            HStack {
-                Picker("Store", selection: $store.selectedStoreFilter) {
-                    ForEach(store.availableStores, id: \.self) { storeName in
-                        Text(storeName).tag(storeName)
+            DisclosureGroup("More Filters", isExpanded: $showingMoreFilters) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("Store", selection: $store.selectedStoreFilter) {
+                        ForEach(store.availableStores, id: \.self) { storeName in
+                            Text(storeName).tag(storeName)
+                        }
                     }
+                    .pickerStyle(.menu)
+
+                    filterToggle(title: "Hide Red", isOn: $store.onlyShowCompatible)
+                    filterToggle(title: "Hide Caution", isOn: $store.hideCautionOrIncomplete)
                 }
-                .pickerStyle(.menu)
-
-                Spacer()
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                filterToggle(title: "Hide Red", isOn: $store.onlyShowCompatible)
-                filterToggle(title: "Hide Caution", isOn: $store.hideCautionOrIncomplete)
+                .padding(.top, 8)
             }
         }
         .padding()
@@ -149,36 +164,59 @@ struct SearchView: View {
         return !trimmed.isEmpty && store.hasSubmittedSearch
     }
 
-    private var hasAnySubmittedProductSection: Bool {
-        !submittedFavoriteMatches.isEmpty || !submittedRecentMatches.isEmpty || !visibleSearchResults.isEmpty
+    private var submittedSearchContext: SubmittedSearchContext {
+        let results = store.searchResults
+        let resultIDs = Set(results.map(\.id))
+        let favoriteMatches = Array(
+            store.favoriteProducts
+                .filter { resultIDs.contains($0.id) }
+                .prefix(6)
+        )
+        let favoriteIDs = Set(favoriteMatches.map(\.id))
+        let recentMatches = Array(
+            store.recentHistoryProducts
+                .filter { !favoriteIDs.contains($0.id) && resultIDs.contains($0.id) }
+                .prefix(6)
+        )
+        let pinnedIDs = Set(favoriteMatches.map(\.id) + recentMatches.map(\.id))
+        let remainingResults = results.filter { !pinnedIDs.contains($0.id) }
+        let visibleResults = Array(remainingResults.prefix(searchResultLimit))
+
+        return SubmittedSearchContext(
+            resultCount: results.count,
+            favoriteMatches: favoriteMatches,
+            recentMatches: recentMatches,
+            remainingResults: remainingResults,
+            visibleResults: visibleResults
+        )
     }
 
-    private var committedResultSections: some View {
+    private func committedResultSections(context: SubmittedSearchContext) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            if !submittedFavoriteMatches.isEmpty {
+            if !context.favoriteMatches.isEmpty {
                 Text("Favorites")
                     .font(.headline)
-                ForEach(submittedFavoriteMatches) { product in
+                ForEach(context.favoriteMatches) { product in
                     productSearchCard(for: product)
                 }
             }
 
-            if !submittedRecentMatches.isEmpty {
+            if !context.recentMatches.isEmpty {
                 Text("Recent History")
                     .font(.headline)
-                ForEach(submittedRecentMatches) { product in
+                ForEach(context.recentMatches) { product in
                     productSearchCard(for: product)
                 }
             }
 
-            if !visibleSearchResults.isEmpty {
+            if !context.visibleResults.isEmpty {
                 Text("Search Results")
                     .font(.headline)
-                ForEach(visibleSearchResults) { product in
+                ForEach(context.visibleResults) { product in
                     productSearchCard(for: product)
                 }
 
-                if remainingSearchResults.count > searchResultLimit {
+                if context.remainingResults.count > searchResultLimit {
                     Button("Show More Results") {
                         searchResultLimit += 20
                     }
@@ -188,54 +226,25 @@ struct SearchView: View {
         }
     }
 
-    private var submittedFavoriteMatches: [Product] {
-        Array(
-            store.favoriteProducts
-                .filter { submittedResultIDs.contains($0.id) }
-                .prefix(6)
-        )
-    }
-
-    private var submittedRecentMatches: [Product] {
-        let favoriteIDs = Set(submittedFavoriteMatches.map(\.id))
-        return Array(
-            store.recentHistoryProducts
-                .filter { !favoriteIDs.contains($0.id) && submittedResultIDs.contains($0.id) }
-                .prefix(6)
-        )
-    }
-
-    private var submittedResultIDs: Set<String> {
-        Set(store.searchResults.map(\.id))
-    }
-
-    private var remainingSearchResults: [Product] {
-        let pinnedIDs = Set(submittedFavoriteMatches.map(\.id) + submittedRecentMatches.map(\.id))
-        return store.searchResults.filter { !pinnedIDs.contains($0.id) }
-    }
-
-    private var visibleSearchResults: [Product] {
-        Array(remainingSearchResults.prefix(searchResultLimit))
-    }
-
-    private var searchActions: some View {
+    private func searchActions(resultCount: Int) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Button {
+                    cancelPerfProbeIfRunning()
                     Task { await store.performSearch() }
                 } label: {
                     if store.isSearching {
                         ProgressView()
                             .tint(.white)
                     } else {
-                        Text("Search Online Catalog")
+                        Text("Search Online")
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(store.query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || store.isSearching)
 
                 if store.hasSubmittedSearch {
-                    Text("\(store.searchResults.count) foods")
+                    Text("\(resultCount) foods")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -243,7 +252,12 @@ struct SearchView: View {
                 Spacer()
             }
 
+            Text("History, favorites, and saved foods appear as you type. Search Online adds catalog results.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             Button("BETA: Deep Search") {
+                cancelPerfProbeIfRunning()
                 Task { await store.runManualDeepSearchForCurrentQuery() }
             }
             .buttonStyle(.bordered)
@@ -332,6 +346,7 @@ struct SearchView: View {
         VStack(alignment: .leading, spacing: 8) {
             if hasAttemptedDeepSearchForCurrentQuery {
                 Button("Try Deep Search Again") {
+                    cancelPerfProbeIfRunning()
                     Task { await store.runManualDeepSearchForCurrentQuery() }
                 }
                 .buttonStyle(.bordered)
@@ -417,10 +432,11 @@ struct SearchView: View {
                 Button {
                     guard !isRunningPerfProbe else { return }
                     isRunningPerfProbe = true
-                    Task {
+                    perfProbeTask = Task {
                         await store.runDefaultSearchPerfProbe()
                         await MainActor.run {
                             isRunningPerfProbe = false
+                            perfProbeTask = nil
                         }
                     }
                 } label: {
@@ -482,6 +498,13 @@ struct SearchView: View {
                 }
             }
         }
+    }
+
+    private func cancelPerfProbeIfRunning() {
+        guard isRunningPerfProbe || perfProbeTask != nil else { return }
+        perfProbeTask?.cancel()
+        perfProbeTask = nil
+        isRunningPerfProbe = false
     }
 
     private var mealsSection: some View {
@@ -552,6 +575,18 @@ struct SearchView: View {
         return nil
     }
 #endif
+}
+
+private struct SubmittedSearchContext {
+    var resultCount: Int
+    var favoriteMatches: [Product]
+    var recentMatches: [Product]
+    var remainingResults: [Product]
+    var visibleResults: [Product]
+
+    var hasAnyProductSection: Bool {
+        !favoriteMatches.isEmpty || !recentMatches.isEmpty || !visibleResults.isEmpty
+    }
 }
 
 private struct ProductCollectionSheet: View {

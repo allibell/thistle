@@ -549,7 +549,6 @@ struct MealBuilderView: View {
         }
 
         let queryTerms = normalizedTerms(from: trimmed)
-        let ingredientIntent = isIngredientIntent(query: trimmed)
         return combined
             .filter { product in
                 let haystack = "\(product.brand) \(product.name) \(product.ingredients.joined(separator: " "))".lowercased()
@@ -560,7 +559,7 @@ struct MealBuilderView: View {
             }
             .filter { servingsByProduct[$0.id, default: 0] <= 0 }
             .sorted { lhs, rhs in
-                rankedScore(for: lhs, query: trimmed, ingredientIntent: ingredientIntent) > rankedScore(for: rhs, query: trimmed, ingredientIntent: ingredientIntent)
+                rankedScore(for: lhs, query: trimmed) > rankedScore(for: rhs, query: trimmed)
             }
     }
 
@@ -662,17 +661,8 @@ struct MealBuilderView: View {
         isSearchingCatalog = true
         defer { isSearchingCatalog = false }
         do {
-            let ingredientIntent = isIngredientIntent(query: query)
             let results = try await catalogService.searchProducts(matching: query)
-            var combinedResults = results
-
-            if ingredientIntent {
-                async let rawResultsTask = catalogService.searchProducts(matching: "\(query) raw")
-                async let plainResultsTask = catalogService.searchProducts(matching: "\(query) plain")
-                let rawResults = (try? await rawResultsTask) ?? []
-                let plainResults = (try? await plainResultsTask) ?? []
-                combinedResults = deduplicatedProducts(results + rawResults + plainResults)
-            }
+            let combinedResults = results
 
             guard queryToken == productQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
                 return
@@ -680,11 +670,7 @@ struct MealBuilderView: View {
             remoteSearchResults = combinedResults
             semanticFallbackProduct = nil
 
-            let hasStrongIngredientCandidate = combinedResults.contains { product in
-                ingredientSemanticScore(for: product, query: query) >= 70
-            }
-
-            if combinedResults.isEmpty || (ingredientIntent && !hasStrongIngredientCandidate) {
+            if combinedResults.isEmpty {
                 let semantic: Product?
                 do {
                     semantic = try await deepSearchService.deepSearchProduct(matching: query)
@@ -845,7 +831,7 @@ struct MealBuilderView: View {
             .filter { $0.count >= 2 }
     }
 
-    private func rankedScore(for product: Product, query: String, ingredientIntent: Bool) -> Int {
+    private func rankedScore(for product: Product, query: String) -> Int {
         let haystack = "\(product.brand) \(product.name)".lowercased()
         let terms = normalizedTerms(from: query)
         let termMatches = terms.reduce(into: 0) { partial, term in
@@ -854,8 +840,10 @@ struct MealBuilderView: View {
         let localUsageBoost = store.usageCounts[product.id, default: 0] * 2
         let favoriteBoost = store.isFavorite(product) ? 40 : 0
         let semanticBoost = isSemanticFallback(product) ? 14 : 0
-        let ingredientBoost = ingredientIntent ? ingredientSemanticScore(for: product, query: query) : 0
-        return (termMatches * 20) + (product.dataCompletenessScore * 8) + localUsageBoost + favoriteBoost + semanticBoost + ingredientBoost
+        let normalizedName = normalizeComparableText(product.name)
+        let normalizedQuery = normalizeComparableText(query)
+        let exactMatchBoost = normalizedName == normalizedQuery ? 60 : (normalizedName.hasPrefix(normalizedQuery) ? 30 : 0)
+        return (termMatches * 20) + (product.dataCompletenessScore * 8) + localUsageBoost + favoriteBoost + semanticBoost + exactMatchBoost
     }
 
     private func isFuzzyTokenMatch(query: String, candidate: String) -> Bool {
@@ -917,51 +905,6 @@ struct MealBuilderView: View {
     private func isSemanticFallback(_ product: Product) -> Bool {
         guard let semanticFallbackProduct else { return false }
         return semanticFallbackProduct.canonicalLookupKey == product.canonicalLookupKey
-    }
-
-    private func isIngredientIntent(query: String) -> Bool {
-        let terms = normalizedTerms(from: query)
-        guard !terms.isEmpty, terms.count <= 2 else { return false }
-        let dishTerms: Set<String> = [
-            "salad", "soup", "pizza", "sandwich", "tortelloni", "quiche", "lasagna",
-            "bowl", "meal", "wrap", "pasta", "dish", "recipe", "frozen", "prepared"
-        ]
-        return terms.allSatisfy { !dishTerms.contains($0) }
-    }
-
-    private func ingredientSemanticScore(for product: Product, query: String) -> Int {
-        let normalizedName = normalizeComparableText(product.name)
-        let queryTerms = Set(normalizedTerms(from: query))
-        let nameTerms = Set(normalizedTerms(from: product.name))
-
-        var score = 0
-        if normalizedName == normalizeComparableText(query) {
-            score += 120
-        } else if normalizedName.hasPrefix(normalizeComparableText(query)) {
-            score += 70
-        }
-
-        let overlap = queryTerms.intersection(nameTerms).count
-        score += overlap * 18
-
-        if overlap == queryTerms.count, !queryTerms.isEmpty {
-            score += 30
-        }
-
-        // Prefer simple ingredient entries over prepared dishes for ingredient intent queries.
-        let dishSignals = [
-            "tortelloni", "quiche", "pizza", "salad", "meal", "prepared", "frozen",
-            "lasagna", "burrito", "sandwich", "soup", "dhal", "curry", "ricotta", "feta"
-        ]
-        for signal in dishSignals where normalizedName.contains(signal) {
-            score -= 35
-        }
-
-        if product.source == .usda {
-            score += 20
-        }
-
-        return score
     }
 
     private func normalizeComparableText(_ value: String) -> String {

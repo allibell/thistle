@@ -43,8 +43,7 @@ struct DeepSearchService: DeepSearchServing, Sendable {
             try await aiFallback.enrich(query: trimmed, existing: nil)
         }
 
-        let heuristicCandidate = heuristicIngredientCandidate(forQuery: trimmed, existing: nil)
-        let candidates = [await usdaCandidate, await catalogCandidate, await webCandidate, await aiCandidate, heuristicCandidate].compactMap { $0 }
+        let candidates = [await usdaCandidate, await catalogCandidate, await webCandidate, await aiCandidate].compactMap { $0 }
         guard !candidates.isEmpty else { return nil }
         return mergedCandidate(from: candidates, query: trimmed)
     }
@@ -69,10 +68,7 @@ struct DeepSearchService: DeepSearchServing, Sendable {
             let targetedQuery = ([product.brand, product.name, barcode]
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0 != "Unknown Brand" })
                 .joined(separator: " ")
-            return try await web.searchProductUsingImageOCR(
-                matching: targetedQuery,
-                preferredPageURLs: hintedPageURLs(query: targetedQuery)
-            )
+            return try await web.searchProductUsingImageOCR(matching: targetedQuery)
         }
         async let finalAICandidate: Product? = safeSourceLookup {
             guard missingIngredients else { return nil }
@@ -82,52 +78,9 @@ struct DeepSearchService: DeepSearchServing, Sendable {
             return try await aiFallback.enrich(query: aiQuery, existing: product)
         }
 
-        let heuristicCandidate = heuristicIngredientCandidate(forQuery: query, existing: product)
-        let candidates = [await barcodeCandidate, await queryCandidate, await forcedImageOCRCandidate, await finalAICandidate, heuristicCandidate].compactMap { $0 }
+        let candidates = [await barcodeCandidate, await queryCandidate, await forcedImageOCRCandidate, await finalAICandidate].compactMap { $0 }
         guard !candidates.isEmpty else { return nil }
         return mergedCandidate(from: candidates, query: query)
-    }
-
-    private func heuristicIngredientCandidate(forQuery query: String, existing: Product?) -> Product? {
-        if let existing, existing.hasIngredientDetails {
-            return nil
-        }
-        let normalized = query.lowercased()
-        let includeSignals = ["americano", "caffe americano", "black coffee", "brewed coffee", "drip coffee"]
-        let excludeSignals = ["latte", "mocha", "macchiato", "frappuccino", "cappuccino", "cold brew with", "cream", "milk", "sugar", "sweetened", "vanilla"]
-        let isLikelyPlainCoffee = includeSignals.contains { normalized.contains($0) } && !excludeSignals.contains { normalized.contains($0) }
-        guard isLikelyPlainCoffee else { return nil }
-
-        let inferredName = existing?.name.nilIfEmpty ?? query
-        let inferredBrand = existing?.brand.nilIfEmpty ?? (normalized.contains("starbucks") ? "Starbucks" : "Unknown Brand")
-        let inferredNutrition = existing?.nutrition ?? NutritionFacts(calories: 5, protein: 0, carbs: 1, fat: 0)
-        let inferredServing = existing?.servingDescription.nilIfEmpty ?? "1 cup (240 mL)"
-
-        return Product(
-            source: .deepSearch,
-            name: inferredName,
-            brand: inferredBrand,
-            barcode: existing?.barcode ?? "",
-            stores: existing?.stores ?? [],
-            servingDescription: inferredServing,
-            ingredients: ["Water", "Coffee"],
-            nutrition: inferredNutrition,
-            imageURL: existing?.imageURL
-        )
-    }
-
-    private func hintedPageURLs(query: String) -> [URL] {
-        let normalized = query.lowercased()
-        if normalized.contains("passion fruit mandarin kvass")
-            || normalized.contains("biotic ferments")
-            || normalized.contains("0850012028109") {
-            return [
-                URL(string: "https://www.safeway.com/shop/product-details.970407528.html"),
-                URL(string: "https://www.bioticferments.com/passion-fruit-mandarin"),
-                URL(string: "https://directionsforme.org/product/251468")
-            ].compactMap { $0 }
-        }
-        return []
     }
 
     private func safeSourceLookup(_ operation: () async throws -> Product?) async -> Product? {
@@ -313,14 +266,14 @@ private struct WebFallbackClient: Sendable {
     }
 
     func searchProduct(matching query: String) async throws -> Product? {
-        let fastURLs = try await candidatePageURLs(for: query, includeSlowRetailerQueries: false)
+        let fastURLs = try await candidatePageURLs(for: query, includeExpandedQueries: false)
         let bestMatch = try await bestScrapedProduct(from: fastURLs.prefix(6), query: query, budget: .fast)
 
         if let bestMatch, bestMatch.hasIngredientDetails && bestMatch.hasMeaningfulNutrition {
             return bestMatch
         }
 
-        let slowURLs = try await candidatePageURLs(for: query, includeSlowRetailerQueries: true)
+        let slowURLs = try await candidatePageURLs(for: query, includeExpandedQueries: true)
         if let slowOCRCandidate = try await bestScrapedProduct(from: slowURLs.prefix(12), query: query, budget: .slow) {
             if let bestMatch {
                 let preferred = score(product: slowOCRCandidate, for: query) > score(product: bestMatch, for: query) ? slowOCRCandidate : bestMatch
@@ -332,8 +285,8 @@ private struct WebFallbackClient: Sendable {
         return bestMatch
     }
 
-    func searchProductUsingImageOCR(matching query: String, preferredPageURLs: [URL] = []) async throws -> Product? {
-        let urls = try await candidatePageURLs(for: query, includeSlowRetailerQueries: true, preferredPageURLs: preferredPageURLs)
+    func searchProductUsingImageOCR(matching query: String) async throws -> Product? {
+        let urls = try await candidatePageURLs(for: query, includeExpandedQueries: true)
         return try await bestScrapedProduct(from: urls.prefix(16), query: query, budget: .slow)
     }
 
@@ -343,42 +296,26 @@ private struct WebFallbackClient: Sendable {
 
     private func candidatePageURLs(
         for query: String,
-        includeSlowRetailerQueries: Bool,
-        preferredPageURLs: [URL] = []
+        includeExpandedQueries: Bool
     ) async throws -> [URL] {
         var urls: [URL] = []
-        urls += preferredPageURLs
         let fastQueries = [
             "\"\(query)\" ingredients nutrition facts",
-            "\"\(query)\" nutrition facts label",
-            "\"\(query)\" site:wholefoodsmarket.com nutrition",
-            "\"\(query)\" site:amazon.com whole foods nutrition",
-            "\"\(query)\" safeway nutrition",
-            "\"\(query)\" instacart nutrition facts",
-            "\"\(query)\" site:myfooddiary.com nutrition facts",
-            "\"\(query)\" site:eatthismuch.com nutrition facts"
+            "\"\(query)\" nutrition facts label"
         ]
 
         for fastQuery in fastQueries {
             urls += try await searchResultURLs(for: fastQuery)
         }
 
-        if includeSlowRetailerQueries {
-            let slowQueries = [
-                "\"\(query)\" site:safeway.com nutrition facts",
-                "\"\(query)\" site:safeway.com ingredients",
-                "\"\(query)\" site:instacart.com nutrition facts",
-                "\"\(query)\" site:wholefoodsmarket.com ingredients",
-                "\"\(query)\" site:amazon.com nutrition facts",
-                "\"\(query)\" site:safeway.com product-details",
-                "\"\(query)\" site:myfooddiary.com nutrition",
-                "\"\(query)\" site:myfooddiary.com ingredients",
-                "\"\(query)\" site:eatthismuch.com nutrition",
-                "\"\(query)\" site:eatthismuch.com ingredients",
+        if includeExpandedQueries {
+            let expandedQueries = [
+                "\"\(query)\" ingredients",
+                "\"\(query)\" nutrition facts",
                 "\"\(query)\" back label ingredients"
             ]
-            for slowQuery in slowQueries {
-                urls += try await searchResultURLs(for: slowQuery)
+            for expandedQuery in expandedQueries {
+                urls += try await searchResultURLs(for: expandedQuery)
             }
         }
 
@@ -455,7 +392,7 @@ private struct WebFallbackClient: Sendable {
             name: pageTitle,
             brand: structured.brand.nilIfEmpty ?? inferBrand(from: pageTitle, query: query),
             barcode: "",
-            stores: inferredStores(from: url),
+            stores: [],
             servingDescription: "1 serving",
             ingredients: ingredients,
             nutrition: nutrition
@@ -624,11 +561,6 @@ private struct WebFallbackClient: Sendable {
         if value.contains("facts") { score += 6 }
         if value.contains("label") { score += 6 }
         if value.contains("back") { score += 3 }
-        if value.contains("safeway") { score += 3 }
-        if value.contains("safewaycdn") { score += 4 }
-        if value.contains("instacart") { score += 2 }
-        if value.contains("myfooddiary") { score += 2 }
-        if value.contains("eatthismuch") { score += 3 }
         if value.hasSuffix(".jpg") || value.hasSuffix(".jpeg") || value.hasSuffix(".png") || value.hasSuffix(".webp") {
             score += 2
         }
@@ -655,15 +587,6 @@ private struct WebFallbackClient: Sendable {
         } catch {
             return ""
         }
-    }
-
-    private func inferredStores(from url: URL) -> [String] {
-        guard let host = url.host?.lowercased() else { return [] }
-        if host.contains("safeway") { return ["Safeway"] }
-        if host.contains("instacart") { return ["Instacart"] }
-        if host.contains("wholefoods") { return ["Whole Foods"] }
-        if host.contains("traderjoes") { return ["Trader Joe's"] }
-        return []
     }
 
     private func score(product: Product, for query: String) -> Int {

@@ -75,6 +75,20 @@ struct GoalsView: View {
             }
 
             Section("Other Nutrition Goals") {
+                ForEach(NutritionGoalPreset.allCases) { preset in
+                    Button {
+                        store.applyNutritionGoalPreset(preset)
+                        showGoalsSavedConfirmation()
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(preset.rawValue)
+                            Text(preset.summary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
                 Stepper(
                     "Daily fiber: \(store.goals.fiber.formatted(.number.precision(.fractionLength(0...1)))) g",
                     value: goalsBinding(\.fiber),
@@ -82,7 +96,35 @@ struct GoalsView: View {
                     step: 1
                 )
 
-                Text("Fiber is tracked separately from calorie-based macro split. This section will also hold micronutrient goals like calcium and vitamin D.")
+                Stepper(
+                    "Daily iron: \(store.goals.ironMg.formatted(.number.precision(.fractionLength(0...1)))) mg",
+                    value: goalsBinding(\.ironMg),
+                    in: 0...45,
+                    step: 1
+                )
+
+                Stepper(
+                    "Daily vitamin D: \(store.goals.vitaminDMcg.formatted(.number.precision(.fractionLength(0...1)))) mcg",
+                    value: goalsBinding(\.vitaminDMcg),
+                    in: 0...100,
+                    step: 1
+                )
+
+                Stepper(
+                    "Saturated fat limit: \(store.goals.saturatedFatLimit.formatted(.number.precision(.fractionLength(0...1)))) g",
+                    value: goalsBinding(\.saturatedFatLimit),
+                    in: 0...50,
+                    step: 1
+                )
+
+                Stepper(
+                    "Cholesterol limit: \(store.goals.cholesterolLimitMg.formatted(.number.precision(.fractionLength(0...0)))) mg",
+                    value: goalsBinding(\.cholesterolLimitMg),
+                    in: 0...500,
+                    step: 10
+                )
+
+                Text("These are tracking targets and limits for personal nutrition planning. Use clinician guidance for lab-specific goals.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -104,6 +146,11 @@ struct GoalsView: View {
                     Text("\(store.goals.fiber.formatted(.number.precision(.fractionLength(0...1)))) g")
                         .foregroundStyle(.secondary)
                 }
+
+                goalSummaryRow("Iron Goal", value: store.goals.ironMg, unit: "mg")
+                goalSummaryRow("Vitamin D Goal", value: store.goals.vitaminDMcg, unit: "mcg")
+                goalSummaryRow("Saturated Fat Limit", value: store.goals.saturatedFatLimit, unit: "g")
+                goalSummaryRow("Cholesterol Limit", value: store.goals.cholesterolLimitMg, unit: "mg")
             }
         }
         .scrollContentBackground(.hidden)
@@ -162,6 +209,15 @@ struct GoalsView: View {
     private func grams(forPercent percent: Int, caloriesPerGram: Double) -> Double {
         let allocatedCalories = (Double(store.goals.calories) * Double(percent)) / 100
         return allocatedCalories / caloriesPerGram
+    }
+
+    private func goalSummaryRow(_ title: String, value: Double, unit: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text("\(value.formatted(.number.precision(.fractionLength(0...1)))) \(unit)")
+                .foregroundStyle(.secondary)
+        }
     }
 
     private func showGoalsSavedConfirmation() {

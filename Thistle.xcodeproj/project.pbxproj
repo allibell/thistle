@@ -29,6 +29,7 @@
 		A6F97033B700B2D0DD8C8CE4 /* GoalsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED20BDA66DA7EF678260FD2 /* GoalsView.swift */; };
 		A99FFD6565F9EBA07F8F9F32 /* DeepSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA6526FB9CE2F1EF6A3353FD /* DeepSearchService.swift */; };
 		AA2E3BC9AFDA15A4B6A988E1 /* Nabla-Regular-VariableFont_EDPT,EHLT.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 671253B5CBFCFBC45D64F75A /* Nabla-Regular-VariableFont_EDPT,EHLT.ttf */; };
+		C5622A49FFEF273EF68A09C6 /* QuickLogSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9BDEB67713453B31388851A /* QuickLogSheet.swift */; };
 		C7F3E881A7B9DE38A33B21B4 /* BarcodeNormalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF7AE872E0A4224A5DB4BFF /* BarcodeNormalizer.swift */; };
 		CA12053F911504C27FCE6579 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 00DEA0FA2BC3DBDD903C07A5 /* Assets.xcassets */; };
 		D2A1080F4E1C83D0C24F56E8 /* NutritionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FF5B9402859F0DDC532FB62 /* NutritionModels.swift */; };
@@ -90,6 +91,7 @@
 		D869E5234B4DF4CD04D85215 /* DiaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiaryView.swift; sourceTree = "<group>"; };
 		DEA8C0660D468047F7C570BD /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
 		EBF83D08D07E521287F90A8E /* IngredientAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IngredientAnalyzer.swift; sourceTree = "<group>"; };
+		F9BDEB67713453B31388851A /* QuickLogSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickLogSheet.swift; sourceTree = "<group>"; };
 		FA6526FB9CE2F1EF6A3353FD /* DeepSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSearchService.swift; sourceTree = "<group>"; };
 		FBF7AE872E0A4224A5DB4BFF /* BarcodeNormalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BarcodeNormalizer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -170,6 +172,7 @@
 				0D31C97555E7FEA256B10086 /* MealsView.swift */,
 				C1B0326532AA2A269E54964B /* ProductDetailView.swift */,
 				D16AAEDB8A8E7FDE39BE68FC /* ProductEntrySheet.swift */,
+				F9BDEB67713453B31388851A /* QuickLogSheet.swift */,
 				0A7763A456EC44FA70066F77 /* RootTabView.swift */,
 				7B610C171A8F6027655E6E4A /* ScanView.swift */,
 				66E084ED6470503586CEBA70 /* SearchView.swift */,
@@ -330,6 +333,7 @@
 				A2D910C06474C6B283EB4AE7 /* ProductCatalogService.swift in Sources */,
 				33B926E56A34904D0DB23A6B /* ProductDetailView.swift in Sources */,
 				D957BC66181AAAA835E13A71 /* ProductEntrySheet.swift in Sources */,
+				C5622A49FFEF273EF68A09C6 /* QuickLogSheet.swift in Sources */,
 				1B15392BA8A61437081324CF /* RootTabView.swift in Sources */,
 				568BAB695AE0EA0E0E20AA0B /* SampleData.swift in Sources */,
 				85E64854F1801102A9875EAC /* ScanView.swift in Sources */,
