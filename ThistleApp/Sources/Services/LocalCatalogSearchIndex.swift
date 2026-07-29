@@ -251,6 +251,20 @@ actor LocalCatalogSearchIndex {
             addColumnIfMissing(db: db, table: "indexed_products", column: "vitamin_c_mg", definition: "REAL NOT NULL DEFAULT 0")
             execute(db: db, sql: "PRAGMA user_version = 2;")
         }
+        if userVersion < 3 {
+            // USDA ingestion previously mixed branded records into the generic-food lane and
+            // Deep Search could combine nutrition from a different candidate. Those rows are
+            // disposable cache entries and will be rebuilt with unit-safe, identity-safe data.
+            execute(db: db, sql: """
+            DELETE FROM indexed_products_fts
+            WHERE id IN (
+                SELECT id FROM indexed_products
+                WHERE source = 'usda' OR (source = 'deepSearch' AND lower(brand) = 'usda')
+            );
+            """)
+            execute(db: db, sql: "DELETE FROM indexed_products WHERE source = 'usda' OR (source = 'deepSearch' AND lower(brand) = 'usda');")
+            execute(db: db, sql: "PRAGMA user_version = 3;")
+        }
     }
 
     private func execute(_ sql: String) {

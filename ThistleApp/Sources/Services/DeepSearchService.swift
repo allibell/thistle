@@ -92,31 +92,85 @@ struct DeepSearchService: DeepSearchServing, Sendable {
     }
 
     private func mergedCandidate(from candidates: [Product], query: String) -> Product {
-        let bestByCompleteness = candidates.max(by: { $0.dataCompletenessScore < $1.dataCompletenessScore }) ?? candidates[0]
-        let bestIngredients = candidates.max(by: { $0.ingredients.count < $1.ingredients.count })
-        let bestNutrition = candidates
-            .filter(\.hasMeaningfulNutrition)
-            .max(by: { nutritionScore($0.nutrition) < nutritionScore($1.nutrition) })
-        let nonDefaultServing = candidates.first { $0.servingDescription != "1 serving" }
-        let firstBarcode = candidates.first { !$0.barcode.isEmpty }?.barcode ?? ""
-        let firstImage = candidates.compactMap(\.imageURL).first
-        let stores = Array(Set(candidates.flatMap(\.stores))).sorted()
+        let primary = candidates.max {
+            candidateScore($0, query: query) < candidateScore($1, query: query)
+        } ?? candidates[0]
+        let compatible = candidates.filter { isSameFoodIdentity($0, primary) }
+        let ingredientSource = primary.ingredients.isEmpty
+            ? compatible.max(by: { $0.ingredients.count < $1.ingredients.count })
+            : primary
+        let nutritionSource = primary.hasMeaningfulNutrition
+            ? primary
+            : compatible.first(where: \.hasMeaningfulNutrition)
+        let servingSource = primary.servingDescription == "1 serving"
+            ? compatible.first { $0.servingDescription != "1 serving" }
+            : primary
+        let firstImage = primary.imageURL ?? compatible.compactMap(\.imageURL).first
+        let stores = Array(Set(compatible.flatMap(\.stores))).sorted()
 
         return Product(
             source: .deepSearch,
-            name: bestTitle(primary: bestByCompleteness.name, fallback: candidates.first?.name ?? "", query: query),
-            brand: bestTitle(primary: bestByCompleteness.brand, fallback: candidates.first?.brand ?? "", query: ""),
-            barcode: firstBarcode,
+            name: bestTitle(primary: primary.name, fallback: query, query: query),
+            brand: bestTitle(primary: primary.brand, fallback: "", query: ""),
+            barcode: primary.barcode,
             stores: stores,
-            servingDescription: nonDefaultServing?.servingDescription ?? bestByCompleteness.servingDescription,
-            ingredients: bestIngredients?.ingredients ?? bestByCompleteness.ingredients,
-            nutrition: bestNutrition?.nutrition ?? bestByCompleteness.nutrition,
+            servingDescription: servingSource?.servingDescription ?? primary.servingDescription,
+            ingredients: ingredientSource?.ingredients ?? primary.ingredients,
+            nutrition: nutritionSource?.nutrition ?? primary.nutrition,
             imageURL: firstImage
         )
     }
 
-    private func nutritionScore(_ facts: NutritionFacts) -> Double {
-        Double(facts.calories) + facts.protein + facts.carbs + facts.fat
+    private func candidateScore(_ product: Product, query: String) -> Int {
+        let queryTerms = Set(identityTerms(query))
+        let nameTerms = Set(identityTerms(product.name))
+        let fullTerms = Set(identityTerms("\(product.brand) \(product.name)"))
+        guard !queryTerms.isEmpty else { return product.dataCompletenessScore }
+
+        var score = queryTerms.intersection(fullTerms).count * 25
+        if nameTerms == queryTerms {
+            score += 240
+        } else if queryTerms.isSubset(of: nameTerms) {
+            score += max(0, 90 - ((nameTerms.count - queryTerms.count) * 30))
+        } else if queryTerms.isSubset(of: fullTerms) {
+            score += 70
+        }
+        if product.brand == "USDA" { score += 55 }
+        if product.name.localizedCaseInsensitiveContains("raw") { score += 25 }
+        if queryTerms.count <= 2, product.brand != "USDA", !product.barcode.isEmpty { score -= 35 }
+        return score + (product.dataCompletenessScore * 2)
+    }
+
+    private func isSameFoodIdentity(_ lhs: Product, _ rhs: Product) -> Bool {
+        let lhsBarcode = BarcodeNormalizer.digitsOnly(from: lhs.barcode)
+        let rhsBarcode = BarcodeNormalizer.digitsOnly(from: rhs.barcode)
+        if !lhsBarcode.isEmpty, lhsBarcode == rhsBarcode { return true }
+
+        let namesMatch = Set(identityTerms(lhs.name)) == Set(identityTerms(rhs.name))
+        guard namesMatch else { return false }
+        let lhsBrand = normalizedIdentityText(lhs.brand)
+        let rhsBrand = normalizedIdentityText(rhs.brand)
+        return lhsBrand == rhsBrand || lhsBrand.isEmpty || rhsBrand.isEmpty
+    }
+
+    private func identityTerms(_ text: String) -> [String] {
+        let modifiers: Set<String> = ["raw", "fresh", "whole", "uncooked"]
+        return normalizedIdentityText(text)
+            .components(separatedBy: .whitespaces)
+            .filter { $0.count >= 2 && !modifiers.contains($0) }
+            .map { token in
+                if token.hasSuffix("ies"), token.count > 3 { return String(token.dropLast(3)) + "y" }
+                if token.hasSuffix("es"), token.count > 4 { return String(token.dropLast(2)) }
+                if token.hasSuffix("s"), token.count > 3 { return String(token.dropLast()) }
+                return token
+            }
+    }
+
+    private func normalizedIdentityText(_ text: String) -> String {
+        text.lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func bestTitle(primary: String, fallback: String, query: String) -> String {
@@ -143,7 +197,7 @@ struct DeepSearchService: DeepSearchServing, Sendable {
     }
 }
 
-private struct USDAFoodDataCentralClient: Sendable {
+struct USDAFoodDataCentralClient: Sendable {
     private let session: URLSession
     private let baseURL = URL(string: "https://api.nal.usda.gov/fdc/v1/foods/search")!
 
@@ -152,21 +206,53 @@ private struct USDAFoodDataCentralClient: Sendable {
     }
 
     func searchProduct(matching query: String) async throws -> Product? {
+        let products = try await searchProducts(matching: query, pageSize: 12)
+        return products.max { searchScore(for: $0, query: query) < searchScore(for: $1, query: query) }
+    }
+
+    func searchProducts(matching query: String, pageSize: Int = 12) async throws -> [Product] {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
         components?.queryItems = [
             URLQueryItem(name: "api_key", value: "DEMO_KEY"),
             URLQueryItem(name: "query", value: query),
-            URLQueryItem(name: "dataType", value: "Branded"),
-            URLQueryItem(name: "pageSize", value: "5")
+            // USDA is the generic-food lane. Packaged/branded products come from the catalog,
+            // avoiding misleading branded rows whose names are just "Strawberry" or "Apple".
+            URLQueryItem(name: "dataType", value: "Foundation,SR Legacy"),
+            URLQueryItem(name: "pageSize", value: "\(pageSize)")
         ]
 
         let request = URLRequest(url: components?.url ?? baseURL)
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            return nil
+            return []
         }
         let decoded = try? JSONDecoder().decode(USDAFoodSearchResponse.self, from: data)
-        return decoded?.foods?.first?.asProduct()
+        return decoded?.foods?.map { $0.asProduct() } ?? []
+    }
+
+    private func searchScore(for product: Product, query: String) -> Int {
+        let queryTerms = Set(identityTerms(query))
+        let nameTerms = Set(identityTerms(product.name))
+        guard !queryTerms.isEmpty else { return 0 }
+        var score = queryTerms.intersection(nameTerms).count * 30
+        if nameTerms == queryTerms { score += 220 }
+        else if queryTerms.isSubset(of: nameTerms) { score += max(0, 80 - ((nameTerms.count - queryTerms.count) * 25)) }
+        if product.brand == "USDA" { score += 50 }
+        if product.name.localizedCaseInsensitiveContains("raw") { score += 25 }
+        return score
+    }
+
+    private func identityTerms(_ text: String) -> [String] {
+        let modifiers: Set<String> = ["raw", "fresh", "whole", "uncooked"]
+        return text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count >= 2 && !modifiers.contains($0) }
+            .map { token in
+                if token.hasSuffix("ies"), token.count > 3 { return String(token.dropLast(3)) + "y" }
+                if token.hasSuffix("es"), token.count > 4 { return String(token.dropLast(2)) }
+                if token.hasSuffix("s"), token.count > 3 { return String(token.dropLast()) }
+                return token
+            }
     }
 }
 
@@ -175,18 +261,35 @@ private struct USDAFoodSearchResponse: Decodable {
 }
 
 private struct USDAFood: Decodable {
+    var fdcId: Int?
     var description: String?
     var brandOwner: String?
     var gtinUpc: String?
+    var ingredients: String?
+    var dataType: String?
     var servingSize: Double?
     var servingSizeUnit: String?
     var foodNutrients: [USDAFoodNutrient]?
 
     func asProduct() -> Product {
-        Product(
+        let resolvedName = (description ?? "").capitalized.nilIfEmpty ?? "Unknown Product"
+        let isGeneric = dataType == "Foundation" || dataType == "SR Legacy"
+        let ingredientList: [String]
+        if let ingredients = ingredients?.nilIfEmpty {
+            ingredientList = ingredients
+                .split(whereSeparator: { $0 == "," || $0 == ";" })
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        } else if isGeneric {
+            ingredientList = [resolvedName.replacingOccurrences(of: ", raw", with: "", options: .caseInsensitive)]
+        } else {
+            ingredientList = []
+        }
+        return Product(
+            id: fdcId.map { "usda:\($0)" },
             source: .usda,
-            name: (description ?? "").capitalized.nilIfEmpty ?? "Unknown Product",
-            brand: brandOwner?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown Brand",
+            name: resolvedName,
+            brand: isGeneric ? "USDA" : (brandOwner?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Unknown Brand"),
             barcode: gtinUpc ?? "",
             stores: [],
             servingDescription: servingSize.map { size in
@@ -194,21 +297,22 @@ private struct USDAFood: Decodable {
                     return "\(size.formatted()) \(servingSizeUnit)"
                 }
                 return "\(size.formatted()) serving"
-            } ?? "1 serving",
-            ingredients: [],
+            } ?? (isGeneric ? "100 g" : "1 serving"),
+            ingredients: ingredientList,
             nutrition: nutritionFacts
         )
     }
 
     private var nutritionFacts: NutritionFacts {
-        func amount(named names: Set<String>) -> Double {
+        func amount(named names: Set<String>, unit: String? = nil) -> Double {
             (foodNutrients ?? []).first { nutrient in
                 names.contains(nutrient.nutrientName.lowercased())
+                    && (unit == nil || nutrient.unitName?.lowercased() == unit?.lowercased())
             }?.value ?? 0
         }
 
         return NutritionFacts(
-            calories: Int(amount(named: ["energy", "energy (atwater general factors)"]).rounded()),
+            calories: Int(amount(named: ["energy", "energy (atwater general factors)"], unit: "kcal").rounded()),
             protein: amount(named: ["protein"]),
             carbs: amount(named: ["carbohydrate, by difference"]),
             fat: amount(named: ["total lipid (fat)"]),
@@ -219,16 +323,19 @@ private struct USDAFood: Decodable {
 
 private struct USDAFoodNutrient: Decodable {
     var nutrientName: String
+    var unitName: String?
     var value: Double
 
     enum CodingKeys: String, CodingKey {
         case nutrientName
+        case unitName
         case value
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         nutrientName = try container.decode(String.self, forKey: .nutrientName)
+        unitName = try container.decodeIfPresent(String.self, forKey: .unitName)
         if let number = try? container.decode(Double.self, forKey: .value) {
             value = number
         } else if let string = try? container.decode(String.self, forKey: .value) {

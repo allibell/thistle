@@ -19,6 +19,7 @@ enum CatalogError: LocalizedError {
 struct ProductCatalogService: ProductCatalogServing, Sendable {
     private let openFoodFacts = OpenFoodFactsClient()
     private let upcItemDB = UPCItemDBClient()
+    private let usda = USDAFoodDataCentralClient()
     private let localIndex = LocalCatalogSearchIndex.shared
 
     func searchProducts(matching query: String) async throws -> [Product] {
@@ -27,19 +28,20 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
             throw CatalogError.invalidQuery
         }
 
-        if await OpenFoodFactsHealthGate.shared.shouldSkipRequests() {
-            return []
-        }
-
         let variants = Array(queryVariants(for: trimmed).prefix(1))
-        let aggregate = await parallelFetchOpenFoodFacts(variants: variants, maxProducts: 24)
+        async let usdaProducts: [Product]? = try? usda.searchProducts(matching: trimmed)
+        let shouldSkipOpenFoodFacts = await OpenFoodFactsHealthGate.shared.shouldSkipRequests()
+        let aggregate = shouldSkipOpenFoodFacts
+            ? (products: [], encounteredNetworkError: false)
+            : await parallelFetchOpenFoodFacts(variants: variants, maxProducts: 24)
+        let governmentFoods = await usdaProducts ?? []
 
-        if aggregate.products.isEmpty, aggregate.encounteredNetworkError {
+        if aggregate.products.isEmpty, governmentFoods.isEmpty, aggregate.encounteredNetworkError {
             // Fail soft: avoid surfacing hard search failures to UI for transient catalog/API issues.
             return []
         }
 
-        let deduped = deduplicate(aggregate.products)
+        let deduped = deduplicate(governmentFoods + aggregate.products)
         let sorted = deduped.sorted { rankingScore(for: $0, query: trimmed) > rankingScore(for: $1, query: trimmed) }
         let indexProducts = Array(sorted.prefix(28))
         Task(priority: .utility) { [localIndex] in
@@ -223,6 +225,15 @@ struct ProductCatalogService: ProductCatalogServing, Sendable {
         let normalizedQuery = normalizedComparableText(query)
         if !normalizedQuery.isEmpty, normalizedHaystack.contains(normalizedQuery) {
             score += 30
+        }
+        if queryTokens.count == 1,
+           let term = queryTokens.first,
+           semanticTokens(product.name).contains(term) {
+            score += 45
+            if product.source == .usda,
+               normalizedComparableText(product.name).contains("raw") {
+                score += 70
+            }
         }
 
         return score

@@ -141,30 +141,73 @@ struct MacroSummaryView: View {
 }
 
 struct IngredientsSection: View {
-    var product: Product
+    var ingredients: [String]
     var analysis: ProductAnalysis
+    var ingredientsAreEstimated: Bool
+
+    init(product: Product, analysis: ProductAnalysis) {
+        ingredients = product.ingredients
+        self.analysis = analysis
+        ingredientsAreEstimated = false
+    }
+
+    init(ingredients: [String], analysis: ProductAnalysis, ingredientsAreEstimated: Bool = false) {
+        self.ingredients = ingredients
+        self.analysis = analysis
+        self.ingredientsAreEstimated = ingredientsAreEstimated
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Ingredients")
-                .font(.headline)
+            HStack {
+                Text("Ingredients")
+                    .font(.headline)
+                Spacer()
+                if ingredientsAreEstimated, !ingredients.isEmpty {
+                    Text("ESTIMATED")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(ThistleTheme.warning)
+                }
+            }
 
-            ForEach(product.ingredients, id: \.self) { ingredient in
+            if ingredients.isEmpty {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "questionmark.circle.fill")
+                        .foregroundStyle(ThistleTheme.warning)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Ingredient details unavailable")
+                            .fontWeight(.semibold)
+                            .foregroundStyle(ThistleTheme.warning)
+                        Text("This is unknown—not confirmation that the food has no concerning ingredients.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            ForEach(ingredients, id: \.self) { ingredient in
                 let matchedFlag = analysis.flags.first { flag in
                     flag.ingredient.localizedCaseInsensitiveContains(ingredient)
                         || ingredient.localizedCaseInsensitiveContains(flag.ingredient)
                 }
+                // Compliance color and evidence confidence are separate dimensions: an inferred
+                // ingredient can still be compatible with the selected diet.
+                let defaultColor = ThistleTheme.primaryGreen
                 HStack(alignment: .top, spacing: 8) {
                     Circle()
-                        .fill((matchedFlag?.severity.color ?? ThistleTheme.primaryGreen).opacity(0.9))
+                        .fill((matchedFlag?.severity.color ?? defaultColor).opacity(0.9))
                         .frame(width: 8, height: 8)
                         .padding(.top, 6)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(ingredient)
                             .fontWeight(matchedFlag?.severity.fontWeight ?? .regular)
-                            .foregroundStyle(matchedFlag?.severity.color ?? .primary)
+                            .foregroundStyle(matchedFlag?.severity.color ?? Color.primary)
                         if let matchedFlag {
                             Text(matchedFlag.reason)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if ingredientsAreEstimated {
+                            Text("Inferred; verify if the exact recipe matters.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

@@ -210,6 +210,7 @@ struct OpenAIFoodLogService: FreeformFoodLogParsing, Sendable {
                     summary: "AI estimate (\(confidencePercent)% confidence). \(detail)",
                     flags: []
                 ),
+                ingredients: node.ingredients,
                 sourceLabel: "AI estimate",
                 inputMethod: inputMethod,
                 confidence: confidence,
@@ -233,6 +234,7 @@ struct OpenAIFoodLogService: FreeformFoodLogParsing, Sendable {
                     Preserve explicit quantities and fractions. Create one root item per separately logged food.
                     Use child items only when a composed food is best explained by ingredients, such as squash, peppers, and oil.
                     A child may itself have children. Do not turn every food into a meal.
+                    Include a concise ingredient list for every item. For restaurant or estimated foods, include only ingredients that are stated or reasonably inferred; describe uncertainty in notes.
                     Nutrition fields must be for ONE base serving; servings is the consumed multiplier.
                     Parent nutrition should represent the complete parent food and is what will count toward diary totals; children are explanatory and must not be added again.
                     Prefer label-like estimates for named packaged products and representative restaurant estimates for ordered drinks or dishes.
@@ -271,12 +273,13 @@ struct OpenAIFoodLogService: FreeformFoodLogParsing, Sendable {
                         "carbs_g": ["type": "number"],
                         "fat_g": ["type": "number"],
                         "fiber_g": ["type": "number"],
+                        "ingredients": ["type": "array", "items": ["type": "string"]],
                         "confidence": ["type": "number"],
                         "notes": ["type": "array", "items": ["type": "string"]]
                     ],
                     "required": [
                         "id", "parent_id", "title", "servings", "base_serving_description",
-                        "calories", "protein_g", "carbs_g", "fat_g", "fiber_g", "confidence", "notes"
+                        "calories", "protein_g", "carbs_g", "fat_g", "fiber_g", "ingredients", "confidence", "notes"
                     ],
                     "additionalProperties": false
                 ]
@@ -386,6 +389,7 @@ private struct ParsedFoodNode: Decodable {
     var carbsG: Double
     var fatG: Double
     var fiberG: Double
+    var ingredients: [String]
     var confidence: Double
     var notes: [String]
 
@@ -400,6 +404,7 @@ private struct ParsedFoodNode: Decodable {
         case carbsG = "carbs_g"
         case fatG = "fat_g"
         case fiberG = "fiber_g"
+        case ingredients
         case confidence
         case notes
     }

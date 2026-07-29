@@ -4,6 +4,10 @@ import Foundation
 struct ProductDetailView: View {
     @EnvironmentObject private var store: AppStore
     var product: Product
+    var primaryActionTitle = "Log Food"
+    var confirmationTitle = "Logged!"
+    var showsAddToMeal = true
+    var onPrimaryAction: ((Product, Double) -> Void)? = nil
     @State private var servings = 1.0
     @State private var servingInput = "1"
     @State private var servingInputError: String?
@@ -122,21 +126,27 @@ struct ProductDetailView: View {
                     }
 
                     HStack(spacing: 10) {
-                        Button("Log Food") {
+                        Button(primaryActionTitle) {
                             guard applyServingInput() else { return }
-                            store.log(product: currentProduct, servings: servings)
+                            if let onPrimaryAction {
+                                onPrimaryAction(currentProduct, servings)
+                            } else {
+                                store.log(product: currentProduct, servings: servings)
+                            }
                             showLogConfirmation()
                         }
                         .buttonStyle(.borderedProminent)
 
-                        Button("Add To Meal") {
-                            guard applyServingInput() else { return }
-                            showingAddToMealSheet = true
+                        if showsAddToMeal {
+                            Button("Add To Meal") {
+                                guard applyServingInput() else { return }
+                                showingAddToMealSheet = true
+                            }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.bordered)
 
                         if didJustLogFood {
-                            Label("Logged!", systemImage: "checkmark.circle.fill")
+                            Label(confirmationTitle, systemImage: "checkmark.circle.fill")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(ThistleTheme.primaryGreen)
                                 .transition(.opacity.combined(with: .scale))

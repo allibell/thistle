@@ -24,6 +24,7 @@ struct QuickLogSheet: View {
     @State private var carbsText = ""
     @State private var fatText = ""
     @State private var estimateMessage: String?
+    @State private var estimateIngredients: [String] = []
     @StateObject private var voiceRecorder = FoodVoiceRecorder()
     @State private var isAIWorking = false
     @State private var aiStatusMessage: String?
@@ -350,21 +351,36 @@ struct QuickLogSheet: View {
 
     private var productSearchResults: [Product] {
         let local = store.localProductSuggestions(matching: searchText)
-        var seen: Set<String> = []
-        return (local + onlineResults).filter { seen.insert($0.id).inserted }
+        return store.rankedProductSuggestions(local + onlineResults, matching: searchText)
     }
 
     private func productResultRow(_ product: Product) -> some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(product.name)
-                    .font(.subheadline.weight(.semibold))
-                Text("\(product.brand) · \(product.nutrition.calories) cal")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            NavigationLink {
+                ProductDetailView(
+                    product: product,
+                    primaryActionTitle: "Add to Plate",
+                    confirmationTitle: "Added!",
+                    showsAddToMeal: false,
+                    onPrimaryAction: { resolvedProduct, servings in
+                        addProductToPlate(resolvedProduct, servings: servings)
+                    }
+                )
+                .environmentObject(store)
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(product.name)
+                        .font(.subheadline.weight(.semibold))
+                    Text("\(product.brand) · \(product.nutrition.calories) cal")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Spacer()
+            .buttonStyle(.plain)
+            .accessibilityHint("Shows ingredients, nutrition, and serving details")
+
             Button {
                 addProductToPlate(product)
             } label: {
@@ -404,17 +420,17 @@ struct QuickLogSheet: View {
         plateItems.reduce(.zero) { $0 + $1.nutrition }
     }
 
-    private func addProductToPlate(_ product: Product) {
+    private func addProductToPlate(_ product: Product, servings: Double = 1) {
         if let index = plateItems.firstIndex(where: { $0.sourceProductID == product.id }) {
-            plateItems[index].servings += 1
+            plateItems[index].servings += servings
         } else {
-            plateItems.append(
-                FoodLogDraftItem(
-                    product: product,
-                    analysis: store.analysis(for: product),
-                    inputMethod: mode == .scan ? .barcode : .catalog
-                )
+            var draft = FoodLogDraftItem(
+                product: product,
+                analysis: store.analysis(for: product),
+                inputMethod: mode == .scan ? .barcode : .catalog
             )
+            draft.servings = servings
+            plateItems.append(draft)
         }
         if mode == .scan {
             scannedCode = nil
@@ -449,6 +465,7 @@ struct QuickLogSheet: View {
     private func estimateLocally() {
         guard let estimate = store.quickMealEstimate(description: descriptionText) else { return }
         applyNutrition(estimate.nutrition)
+        estimateIngredients = estimate.ingredients
         estimateMessage = estimate.sourceSummary
     }
 
@@ -511,7 +528,7 @@ struct QuickLogSheet: View {
         let draft = try await service.draft(
             for: FreeformFoodLogRequest(text: descriptionText, inputMethod: inputMethod)
         )
-        plateItems.append(contentsOf: draft.items)
+        plateItems.append(contentsOf: draft.items.map { store.applyingIngredientAnalysis(to: $0) })
         aiStatusMessage = "Added \(draft.items.count) editable item\(draft.items.count == 1 ? "" : "s") to your plate."
     }
 
@@ -527,6 +544,7 @@ struct QuickLogSheet: View {
     private func applyRemembered(_ estimate: RememberedMealEstimate) {
         descriptionText = estimate.description
         applyNutrition(estimate.nutrition)
+        estimateIngredients = []
         estimateMessage = "Remembered from your previous correction."
     }
 
@@ -540,8 +558,7 @@ struct QuickLogSheet: View {
     private func addEstimateToPlate() {
         guard let calories = parsedCalories else { return }
         let title = descriptionText.trimmingCharacters(in: .whitespacesAndNewlines)
-        plateItems.append(
-            FoodLogDraftItem(
+        let draftItem = FoodLogDraftItem(
                 title: title.isEmpty ? "Quick add" : title,
                 baseServingDescription: "estimated serving",
                 baseNutrition: NutritionFacts(
@@ -555,15 +572,17 @@ struct QuickLogSheet: View {
                     summary: "Quick estimate — edit or replace when more accurate information is available.",
                     flags: []
                 ),
+                ingredients: estimateIngredients,
                 sourceLabel: "Estimate",
                 inputMethod: .typed
             )
-        )
+        plateItems.append(store.applyingIngredientAnalysis(to: draftItem))
         descriptionText = ""
         caloriesText = ""
         proteinText = ""
         carbsText = ""
         fatText = ""
+        estimateIngredients = []
         estimateMessage = nil
     }
 

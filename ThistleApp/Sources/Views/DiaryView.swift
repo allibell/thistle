@@ -13,7 +13,7 @@ struct DiaryView: View {
     @State private var showingQuickLog = false
 
     var body: some View {
-        ScrollView {
+        ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 18) {
                 Text(diaryHeaderTitle)
                     .font(.largeTitle.weight(.bold))
@@ -37,6 +37,7 @@ struct DiaryView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
         }
         .background(ThistleTheme.canvas.ignoresSafeArea())
@@ -425,6 +426,12 @@ struct LoggedFoodDetailView: View {
                     .padding()
                     .background(ThistleTheme.cardElevated, in: RoundedRectangle(cornerRadius: 20))
 
+                    IngredientsSection(
+                        ingredients: resolvedIngredients(for: entry),
+                        analysis: entry.analysis,
+                        ingredientsAreEstimated: entry.sourceProductID == nil && linkedProduct(for: entry) == nil
+                    )
+
                     RatingExplanationView(analysis: entry.analysis)
 
                     let components = resolvedComponents(for: entry)
@@ -518,8 +525,33 @@ struct LoggedFoodDetailView: View {
                 servingText: servingText,
                 nutrition: component.product.nutrition * component.servings,
                 analysis: store.analysis(for: component.product),
-                sourceProductID: component.product.id
+                sourceProductID: component.product.id,
+                ingredients: component.product.ingredients
             )
+        }
+    }
+
+    private func resolvedIngredients(for entry: LoggedFood) -> [String] {
+        if let ingredients = entry.ingredients, !ingredients.isEmpty {
+            return uniqueIngredients(ingredients)
+        }
+        if let product = linkedProduct(for: entry), !product.ingredients.isEmpty {
+            return uniqueIngredients(product.ingredients)
+        }
+        let componentIngredients = resolvedComponents(for: entry).flatMap(allIngredients(in:))
+        return uniqueIngredients(componentIngredients)
+    }
+
+    private func allIngredients(in component: FoodItemComponent) -> [String] {
+        (component.ingredients ?? []) + component.components.flatMap(allIngredients(in:))
+    }
+
+    private func uniqueIngredients(_ ingredients: [String]) -> [String] {
+        var seen: Set<String> = []
+        return ingredients.compactMap { ingredient in
+            let trimmed = ingredient.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed.lowercased()).inserted else { return nil }
+            return trimmed
         }
     }
 }

@@ -312,6 +312,8 @@ struct FoodItemComponent: Identifiable, Hashable, Codable, Sendable {
     var nutrition: NutritionFacts
     var analysis: ProductAnalysis
     var sourceProductID: String?
+    /// Ingredient evidence captured when the entry was created. Optional so older logs still decode.
+    var ingredients: [String]?
     var components: [FoodItemComponent]
 
     init(
@@ -321,6 +323,7 @@ struct FoodItemComponent: Identifiable, Hashable, Codable, Sendable {
         nutrition: NutritionFacts,
         analysis: ProductAnalysis,
         sourceProductID: String? = nil,
+        ingredients: [String]? = nil,
         components: [FoodItemComponent] = []
     ) {
         self.id = id
@@ -329,6 +332,7 @@ struct FoodItemComponent: Identifiable, Hashable, Codable, Sendable {
         self.nutrition = nutrition
         self.analysis = analysis
         self.sourceProductID = sourceProductID
+        self.ingredients = ingredients
         self.components = components
     }
 
@@ -349,6 +353,7 @@ struct FoodLogDraftItem: Identifiable, Hashable, Sendable {
     var baseServingDescription: String
     var baseNutrition: NutritionFacts
     var analysis: ProductAnalysis
+    var ingredients: [String]
     var sourceProductID: String?
     var sourceLabel: String
     var inputMethod: FoodLogInputMethod
@@ -363,6 +368,7 @@ struct FoodLogDraftItem: Identifiable, Hashable, Sendable {
         baseServingDescription: String,
         baseNutrition: NutritionFacts,
         analysis: ProductAnalysis,
+        ingredients: [String] = [],
         sourceProductID: String? = nil,
         sourceLabel: String,
         inputMethod: FoodLogInputMethod,
@@ -376,6 +382,7 @@ struct FoodLogDraftItem: Identifiable, Hashable, Sendable {
         self.baseServingDescription = baseServingDescription
         self.baseNutrition = baseNutrition
         self.analysis = analysis
+        self.ingredients = ingredients
         self.sourceProductID = sourceProductID
         self.sourceLabel = sourceLabel
         self.inputMethod = inputMethod
@@ -390,6 +397,7 @@ struct FoodLogDraftItem: Identifiable, Hashable, Sendable {
             baseServingDescription: product.servingDescription,
             baseNutrition: product.nutrition,
             analysis: analysis,
+            ingredients: product.ingredients,
             sourceProductID: product.id,
             sourceLabel: product.brand.isEmpty ? "Product" : product.brand,
             inputMethod: inputMethod
@@ -413,6 +421,7 @@ struct FoodLogDraftItem: Identifiable, Hashable, Sendable {
             nutrition: nutrition,
             analysis: analysis,
             sourceProductID: sourceProductID,
+            ingredients: ingredients.isEmpty ? nil : ingredients,
             components: components.map(\.componentSnapshot)
         )
     }
@@ -753,6 +762,8 @@ struct LoggedFood: Identifiable, Hashable, Codable {
     var nutrition: NutritionFacts
     var analysis: ProductAnalysis
     var loggedAt: Date
+    /// Ingredient evidence captured at log time, independent of a catalog product remaining available.
+    var ingredients: [String]?
     /// Optional for backward compatibility with diary entries written before composed foods.
     var inputMethod: FoodLogInputMethod?
     /// Optional for backward compatibility. New composed entries persist recursive snapshots.
@@ -769,6 +780,7 @@ struct LoggedFood: Identifiable, Hashable, Codable {
         nutrition: NutritionFacts,
         analysis: ProductAnalysis,
         loggedAt: Date,
+        ingredients: [String]? = nil,
         inputMethod: FoodLogInputMethod? = nil,
         components: [FoodItemComponent]? = nil
     ) {
@@ -782,6 +794,7 @@ struct LoggedFood: Identifiable, Hashable, Codable {
         self.nutrition = nutrition
         self.analysis = analysis
         self.loggedAt = loggedAt
+        self.ingredients = ingredients
         self.inputMethod = inputMethod
         self.components = components
     }

@@ -33,6 +33,24 @@ struct FoodDraftEditorView: View {
                     .padding(.vertical, 6)
             }
 
+            Section {
+                ForEach(item.ingredients.indices, id: \.self) { index in
+                    TextField("Ingredient", text: $item.ingredients[index])
+                }
+                .onDelete { offsets in
+                    item.ingredients.remove(atOffsets: offsets)
+                }
+                Button {
+                    item.ingredients.append("")
+                } label: {
+                    Label("Add ingredient", systemImage: "plus.circle")
+                }
+            } header: {
+                Text("Ingredients")
+            } footer: {
+                Text("For estimates, review inferred ingredients and add anything that is missing before logging.")
+            }
+
             if !item.notes.isEmpty {
                 Section("Assumptions") {
                     ForEach(item.notes, id: \.self) { note in

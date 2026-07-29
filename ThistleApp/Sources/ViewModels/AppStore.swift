@@ -129,6 +129,15 @@ final class AppStore: ObservableObject {
             favoriteImportJobs = state.favoriteImportJobs
             rememberedMealEstimates = state.rememberedMealEstimates
         }
+        // Search caches are disposable. Remove rows produced by the previous USDA/deep-search
+        // merger, which could attach another candidate's kJ energy and ingredients to a title.
+        cachedProducts.removeAll { product in
+            product.source == .usda || (product.source == .deepSearch && product.brand.caseInsensitiveCompare("USDA") == .orderedSame)
+        }
+        searchCache = searchCache.filter { !$0.value.products.isEmpty }
+        deepSearchCache = deepSearchCache.filter { key, _ in
+            !key.hasPrefix("query:") || key.hasPrefix("query:v2:")
+        }
         rebuildRecentLoggedProductIDs()
         pruneExpiredCaches()
         trimCachedProductsIfNeeded()
@@ -312,7 +321,10 @@ final class AppStore: ObservableObject {
         logSearch("Local snapshot: \(normalizedLocalCandidates.count) candidates in \(Date.now.timeIntervalSince(started).formatted(.number.precision(.fractionLength(3))))s")
 
         let cacheKey = normalizedSearchKey(for: trimmed)
-        if let cached = searchCache[cacheKey], isFresh(cached.cachedAt, ttl: catalogCacheTTL) {
+        let needsGenericFoodSource = normalizedTerms(for: trimmed).count <= 2
+        if let cached = searchCache[cacheKey],
+           isFresh(cached.cachedAt, ttl: catalogCacheTTL),
+           (!needsGenericFoodSource || cached.products.contains(where: { $0.source == .usda })) {
             let normalizedCachedProducts = cached.products.map(withInferredStores)
             remoteSearchResults = normalizedCachedProducts
             scheduleSemanticRanking(for: trimmed, candidates: normalizedLocalCandidates + normalizedCachedProducts)
@@ -550,6 +562,33 @@ final class AppStore: ObservableObject {
         )
         analysisCache[key] = computed
         return computed
+    }
+
+    /// Applies the same diet rules used for catalog products to ingredient evidence inferred by
+    /// free-form logging. Estimate uncertainty remains cautionary even when no conflict is found.
+    func applyingIngredientAnalysis(to draftItem: FoodLogDraftItem) -> FoodLogDraftItem {
+        var item = draftItem
+        item.components = item.components.map { applyingIngredientAnalysis(to: $0) }
+        guard !item.ingredients.isEmpty, item.sourceProductID == nil else { return item }
+
+        let estimatedProduct = Product(
+            source: .manual,
+            name: item.title,
+            brand: item.sourceLabel,
+            barcode: "",
+            stores: [],
+            servingDescription: item.baseServingDescription,
+            ingredients: item.ingredients,
+            nutrition: item.baseNutrition
+        )
+        let ingredientAnalysis = analysis(for: estimatedProduct)
+        let rating: ComplianceRating = ingredientAnalysis.rating == .red ? .red : .yellow
+        item.analysis = ProductAnalysis(
+            rating: rating,
+            summary: "\(item.analysis.summary) Ingredient check: \(ingredientAnalysis.summary)",
+            flags: ingredientAnalysis.flags
+        )
+        return item
     }
 
     func analysis(for meal: SavedMeal) -> ProductAnalysis {
@@ -954,6 +993,7 @@ final class AppStore: ObservableObject {
                 nutrition: nutrition,
                 analysis: analysis(for: product),
                 loggedAt: loggedAt,
+                ingredients: product.ingredients,
                 inputMethod: inputMethod
             ),
             at: 0
@@ -973,6 +1013,7 @@ final class AppStore: ObservableObject {
                 nutrition: meal.nutrition,
                 analysis: analysis(for: meal),
                 loggedAt: .now,
+                ingredients: meal.components.flatMap(\.product.ingredients),
                 inputMethod: .savedMeal,
                 components: meal.components.map { component in
                     let componentAnalysis = analysis(for: component.product)
@@ -984,7 +1025,8 @@ final class AppStore: ObservableObject {
                         servingText: servingText,
                         nutrition: component.product.nutrition * component.servings,
                         analysis: componentAnalysis,
-                        sourceProductID: component.product.id
+                        sourceProductID: component.product.id,
+                        ingredients: component.product.ingredients
                     )
                 }
             ),
@@ -1040,6 +1082,7 @@ final class AppStore: ObservableObject {
                 nutrition: draftItem.nutrition,
                 analysis: draftItem.analysis,
                 loggedAt: loggedAt,
+                ingredients: draftItem.ingredients.isEmpty ? nil : draftItem.ingredients,
                 inputMethod: draftItem.inputMethod,
                 components: draftItem.components.isEmpty ? nil : draftItem.components.map(\.componentSnapshot)
             ),
@@ -1068,6 +1111,7 @@ final class AppStore: ObservableObject {
         entry.baseServingDescription = draftItem.baseServingDescription
         entry.nutrition = draftItem.nutrition
         entry.analysis = draftItem.analysis
+        entry.ingredients = draftItem.ingredients.isEmpty ? nil : draftItem.ingredients
         entry.inputMethod = draftItem.inputMethod
         entry.components = draftItem.components.isEmpty ? nil : draftItem.components.map(\.componentSnapshot)
         loggedFoods[index] = entry
@@ -1166,11 +1210,36 @@ final class AppStore: ObservableObject {
             .map(\.0)
     }
 
+    func rankedProductSuggestions(_ products: [Product], matching query: String, limit: Int = 18) -> [Product] {
+        let context = ProductRankingContext(
+            isActiveSearch: true,
+            normalizedQuery: normalizedComparableText(query),
+            queryTerms: normalizedTerms(for: query)
+        )
+        return deduplicatedProductsByID(products)
+            .map { product in
+                var score = combinedRankingScore(for: product, context: context)
+                if isFavorite(product) { score += 4 }
+                if recentLoggedProductIDs.contains(product.id) { score += 3 }
+                score += min(3, usageCounts[product.id, default: 0])
+                return (product, score)
+            }
+            .sorted {
+                if $0.1 == $1.1 { return $0.0.lastUpdatedAt > $1.0.lastUpdatedAt }
+                return $0.1 > $1.1
+            }
+            .prefix(limit)
+            .map(\.0)
+    }
+
     func onlineProductSuggestions(matching query: String, limit: Int = 18) async throws -> [Product] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2 else { return [] }
         let cacheKey = normalizedSearchKey(for: trimmed)
-        if let cached = searchCache[cacheKey], isFresh(cached.cachedAt, ttl: catalogCacheTTL) {
+        let needsGenericFoodSource = normalizedTerms(for: trimmed).count == 1
+        if let cached = searchCache[cacheKey],
+           isFresh(cached.cachedAt, ttl: catalogCacheTTL),
+           (!needsGenericFoodSource || cached.products.contains(where: { $0.source == .usda })) {
             return Array(cached.products.map(withInferredStores).prefix(limit))
         }
 
@@ -1623,6 +1692,20 @@ final class AppStore: ObservableObject {
             .lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { $0.count >= 2 }
+            .map(canonicalSearchToken)
+    }
+
+    private func canonicalSearchToken(_ token: String) -> String {
+        if token.hasSuffix("ies"), token.count > 3 {
+            return String(token.dropLast(3)) + "y"
+        }
+        if token.hasSuffix("es"), token.count > 4 {
+            return String(token.dropLast(2))
+        }
+        if token.hasSuffix("s"), token.count > 3 {
+            return String(token.dropLast())
+        }
+        return token
     }
 
     private func isFuzzyTokenMatch(query: String, candidate: String) -> Bool {
@@ -1765,9 +1848,22 @@ final class AppStore: ObservableObject {
         case .deepSearch: sourceBoost = 3
         case .manual: sourceBoost = 5
         }
+        let wholeFoodBoost: Int = {
+            guard isActiveSearch,
+                  product.source == .usda,
+                  normalizedComparableText(product.name).contains("raw") else { return 0 }
+            let preparationTerms: Set<String> = ["raw", "fresh", "whole", "uncooked"]
+            let nameTerms = Set(normalizedTerms(for: product.name).filter { !preparationTerms.contains($0) })
+            let queryTerms = Set(context.queryTerms)
+            if nameTerms == queryTerms { return 220 }
+            if queryTerms.isSubset(of: nameTerms) {
+                return max(0, 55 - ((nameTerms.count - queryTerms.count) * 25))
+            }
+            return 0
+        }()
         let semanticBoost = isActiveSearch ? semanticRankingScores[product.id, default: 0] : 0
         let completenessPenalty = product.isLowConfidenceCatalogEntry ? -30 : 0
-        return favoriteBoost + recentBoost + usageBoost + completenessBoost + ratingBoost + queryBoost + sourceBoost + semanticBoost + postRankPersonalizationBoost + completenessPenalty
+        return favoriteBoost + recentBoost + usageBoost + completenessBoost + ratingBoost + queryBoost + sourceBoost + wholeFoodBoost + semanticBoost + postRankPersonalizationBoost + completenessPenalty
     }
 
     private func isLikelyCompositeFoodName(_ normalizedName: String) -> Bool {
@@ -1821,7 +1917,7 @@ final class AppStore: ObservableObject {
     }
 
     private func deepSearchQueryCacheKey(for query: String) -> String {
-        "query:\(normalizedSearchKey(for: query))"
+        "query:v2:\(normalizedSearchKey(for: query))"
     }
 
     private func deepSearchProductCacheKey(for product: Product, scope: DeepSearchScope) -> String {
