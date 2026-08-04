@@ -9,9 +9,9 @@ actor LocalCatalogSearchIndex {
     private let isoFormatter = ISO8601DateFormatter()
 
     init(fileManager: FileManager = .default) {
-        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let library = fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        let folderURL = appSupport.appendingPathComponent("Thistle", isDirectory: true)
+        let folderURL = library.appendingPathComponent("ThistleData", isDirectory: true)
         fileURL = folderURL.appendingPathComponent("catalog-index.sqlite")
         db = Self.openAndMigrateDatabase(at: fileURL, fileManager: fileManager, directory: folderURL)
     }

@@ -22,8 +22,22 @@ final class AppPersistence: @unchecked Sendable {
     ) {
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        let folderURL = appSupport.appendingPathComponent("Thistle", isDirectory: true)
+        let library = fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first
+            ?? appSupport.deletingLastPathComponent()
+        let folderURL = library.appendingPathComponent("ThistleData", isDirectory: true)
         fileURL = folderURL.appendingPathComponent("state.json")
+        let legacyFileURL = appSupport
+            .appendingPathComponent("Thistle", isDirectory: true)
+            .appendingPathComponent("state.json")
+        if !fileManager.fileExists(atPath: fileURL.path),
+           fileManager.fileExists(atPath: legacyFileURL.path) {
+            do {
+                try fileManager.createDirectory(at: folderURL, withIntermediateDirectories: true)
+                try fileManager.copyItem(at: legacyFileURL, to: fileURL)
+            } catch {
+                assertionFailure("Failed to migrate persisted state: \(error.localizedDescription)")
+            }
+        }
         self.calendar = calendar
         self.now = now
 

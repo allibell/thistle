@@ -8,69 +8,64 @@ struct FoodDraftEditorView: View {
     @State private var onlineResults: [Product] = []
     @State private var isSearching = false
     @State private var searchError: String?
+    @State private var showingAdvancedDetails = false
+    @State private var showingReplacementSearch = false
 
     var body: some View {
         Form {
-            Section("Food") {
-                TextField("Name", text: $item.title)
-                TextField("Base serving", text: $item.baseServingDescription)
-                TextField("Servings", value: $item.servings, format: .number)
-                    .keyboardType(.decimalPad)
-                LabeledContent("Source", value: item.sourceLabel)
-                if let confidence = item.confidence {
-                    LabeledContent("AI confidence", value: "\(Int((confidence * 100).rounded()))%")
-                }
-            }
+            Section {
+                TextField("Food name", text: $item.title)
+                    .font(.headline)
 
-            Section("Nutrition per base serving") {
-                numberField("Calories", value: $item.baseNutrition.calories, unit: "kcal")
-                numberField("Protein", value: $item.baseNutrition.protein, unit: "g")
-                numberField("Carbs", value: $item.baseNutrition.carbs, unit: "g")
-                numberField("Fat", value: $item.baseNutrition.fat, unit: "g")
-                numberField("Fiber", value: $item.baseNutrition.fiber, unit: "g")
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Quantity")
+                        Text(item.servingText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Stepper(value: $item.servings, in: 0.1...100, step: 0.1) {
+                        EmptyView()
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+
                 MacroSummaryView(nutrition: item.nutrition)
                     .listRowInsets(EdgeInsets())
-                    .padding(.vertical, 6)
-            }
-
-            Section {
-                ForEach(item.ingredients.indices, id: \.self) { index in
-                    TextField("Ingredient", text: $item.ingredients[index])
-                }
-                .onDelete { offsets in
-                    item.ingredients.remove(atOffsets: offsets)
-                }
-                Button {
-                    item.ingredients.append("")
-                } label: {
-                    Label("Add ingredient", systemImage: "plus.circle")
-                }
-            } header: {
-                Text("Ingredients")
-            } footer: {
-                Text("For estimates, review inferred ingredients and add anything that is missing before logging.")
-            }
-
-            if !item.notes.isEmpty {
-                Section("Assumptions") {
-                    ForEach(item.notes, id: \.self) { note in
-                        Text(note)
-                            .font(.subheadline)
-                    }
-                }
+                    .padding(.vertical, 4)
             }
 
             Section {
                 ForEach($item.components) { $component in
-                    NavigationLink {
-                        FoodDraftEditorView(item: $component)
-                            .environmentObject(store)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(component.title)
-                            Text("\(component.servingText) · \(component.nutrition.calories) cal")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                    HStack(spacing: 10) {
+                        NavigationLink {
+                            FoodDraftEditorView(item: $component)
+                                .environmentObject(store)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(component.title)
+                                Text("\(component.servingText) · \(component.nutrition.calories) cal")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        Button(role: .destructive) {
+                            removeComponent(id: component.id)
+                        } label: {
+                            Image(systemName: "trash")
+                                .frame(width: 32, height: 32)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Remove \(component.title)")
+                    }
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            removeComponent(id: component.id)
+                        } label: {
+                            Label("Remove component", systemImage: "trash")
                         }
                     }
                 }
@@ -86,65 +81,141 @@ struct FoodDraftEditorView: View {
             } header: {
                 Text("Components")
             } footer: {
-                Text("Components explain what this item contains. Their nutrition is not counted again on top of the parent item.")
+                Text("Components describe this food; the parent nutrition above remains the logged total.")
             }
 
-            Section {
-                TextField("Search for the correct food", text: $replacementQuery)
-                    .onSubmit { searchOnline() }
-                    .onChange(of: replacementQuery) { _, _ in
-                        onlineResults = []
-                        searchError = nil
-                    }
-
-                Button {
-                    searchOnline()
-                } label: {
-                    if isSearching {
-                        ProgressView("Searching…")
-                    } else {
-                        Label("Search online", systemImage: "magnifyingglass")
+            if showingAdvancedDetails {
+                Section("Serving and source") {
+                    TextField("Base serving", text: $item.baseServingDescription)
+                    LabeledContent("Source", value: item.sourceLabel)
+                    if let confidence = item.confidence {
+                        LabeledContent("AI confidence", value: "\(Int((confidence * 100).rounded()))%")
                     }
                 }
-                .disabled(replacementQuery.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || isSearching)
 
-                if let searchError {
-                    Text(searchError)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                Section("Nutrition per base serving") {
+                    numberField("Calories", value: $item.baseNutrition.calories, unit: "kcal")
+                    numberField("Protein", value: $item.baseNutrition.protein, unit: "g")
+                    numberField("Carbs", value: $item.baseNutrition.carbs, unit: "g")
+                    numberField("Fat", value: $item.baseNutrition.fat, unit: "g")
+                    numberField("Fiber", value: $item.baseNutrition.fiber, unit: "g")
                 }
 
-                ForEach(replacementResults) { product in
-                    Button {
-                        replace(with: product)
-                    } label: {
+                Section("Ingredients") {
+                    ForEach(item.ingredients.indices, id: \.self) { index in
                         HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(product.name)
-                                    .foregroundStyle(.primary)
-                                Text("\(product.brand) · \(product.nutrition.calories) cal")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                            TextField("Ingredient", text: $item.ingredients[index])
+                            Button(role: .destructive) {
+                                item.ingredients.remove(at: index)
+                            } label: {
+                                Image(systemName: "trash")
                             }
-                            Spacer()
-                            Text("Replace")
-                                .font(.caption.weight(.semibold))
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Remove ingredient")
+                        }
+                    }
+                    Button {
+                        item.ingredients.append("")
+                    } label: {
+                        Label("Add ingredient", systemImage: "plus.circle")
+                    }
+                }
+
+                if !item.notes.isEmpty {
+                    Section("AI estimate notes") {
+                        ForEach(item.notes, id: \.self) { note in
+                            Text(note)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
-            } header: {
-                Text("Wrong match?")
-            } footer: {
-                Text("Replacing uses the selected product’s serving and nutrition while retaining whether this draft came from typed or voice input.")
+            }
+
+            if showingReplacementSearch {
+                Section("Find a different food") {
+                    HStack(spacing: 10) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                        TextField("Food, dish, or brand", text: $replacementQuery)
+                            .submitLabel(.search)
+                            .onSubmit { searchOnline() }
+                            .onChange(of: replacementQuery) { _, _ in
+                                onlineResults = []
+                                searchError = nil
+                            }
+                    }
+
+                    Button {
+                        searchOnline()
+                    } label: {
+                        if isSearching {
+                            ProgressView("Searching…")
+                        } else {
+                            Label("Search online", systemImage: "network")
+                        }
+                    }
+                    .disabled(replacementQuery.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || isSearching)
+
+                    if let searchError {
+                        Text(searchError)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    ForEach(replacementResults) { product in
+                        Button {
+                            replace(with: product)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(product.name)
+                                        .foregroundStyle(.primary)
+                                    Text("\(product.brand) · \(product.nutrition.calories) cal")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text("Use")
+                                    .font(.caption.weight(.semibold))
+                            }
+                        }
+                    }
+                }
             }
         }
         .thistleNavigationTitle("Review Food")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
+                        showingAdvancedDetails.toggle()
+                    } label: {
+                        Label(
+                            showingAdvancedDetails ? "Hide nutrition details" : "Edit nutrition and ingredients",
+                            systemImage: "slider.horizontal.3"
+                        )
+                    }
+
+                    Button {
+                        showingReplacementSearch.toggle()
+                    } label: {
+                        Label(
+                            showingReplacementSearch ? "Hide replacement search" : "Find a different food",
+                            systemImage: "magnifyingglass"
+                        )
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .accessibilityLabel("More food options")
+            }
+        }
     }
 
     private var replacementResults: [Product] {
         let local = store.localProductSuggestions(matching: replacementQuery)
-        var seen: Set<String> = []
-        return (local + onlineResults).filter { seen.insert($0.id).inserted }.prefix(12).map { $0 }
+        return store.rankedProductSuggestions(local + onlineResults, matching: replacementQuery, limit: 12)
     }
 
     private var newComponent: FoodLogDraftItem {
@@ -223,6 +294,13 @@ struct FoodDraftEditorView: View {
         )
         replacementQuery = ""
         onlineResults = []
+        showingReplacementSearch = false
+    }
+
+    private func removeComponent(id: String) {
+        withAnimation {
+            item.components.removeAll { $0.id == id }
+        }
     }
 }
 

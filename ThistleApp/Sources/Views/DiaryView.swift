@@ -15,15 +15,13 @@ struct DiaryView: View {
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 18) {
-                Text(diaryHeaderTitle)
+                Text("Diary")
                     .font(.largeTitle.weight(.bold))
-                    .onLongPressGesture(minimumDuration: 0.35) {
-                        showingDatePicker = true
-                    }
+                dateNavigationSection
                 Button {
                     showingQuickLog = true
                 } label: {
-                    Label("Open Food Logger", systemImage: "plus.circle.fill")
+                    Label(foodLoggerButtonTitle, systemImage: "plus.circle.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -109,25 +107,77 @@ struct DiaryView: View {
         }
         .sheet(isPresented: $showingDatePicker) {
             NavigationStack {
-                VStack(spacing: 16) {
-                    DatePicker(
-                        "Diary Date",
-                        selection: $selectedDate,
-                        in: ...Date.now,
-                        displayedComponents: [.date]
-                    )
-                    .datePickerStyle(.graphical)
-                    .labelsHidden()
-                    .padding(.horizontal)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        DatePicker(
+                            "Diary Date",
+                            selection: $selectedDate,
+                            in: ...Date.now,
+                            displayedComponents: [.date]
+                        )
+                        .datePickerStyle(.graphical)
+                        .labelsHidden()
+                        .padding(.horizontal)
 
-                    Text("Pick a day to view historical diary entries.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        if !isViewingToday {
+                            Button {
+                                selectDate(.now)
+                                showingDatePicker = false
+                            } label: {
+                                Label("Return to Today", systemImage: "arrow.uturn.backward.circle.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .padding(.horizontal)
+                        }
 
-                    Spacer(minLength: 0)
+                        if !recentDiaryDays.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Recent Diary Days")
+                                    .font(.headline)
+
+                                ForEach(recentDiaryDays) { day in
+                                    Button {
+                                        selectDate(day.date)
+                                        showingDatePicker = false
+                                    } label: {
+                                        HStack(spacing: 12) {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .foregroundStyle(ThistleTheme.primaryGreen)
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(dayTitle(for: day.date))
+                                                    .font(.subheadline.weight(.semibold))
+                                                    .foregroundStyle(.primary)
+                                                Text("\(day.entryCount) \(day.entryCount == 1 ? "entry" : "entries")")
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            Spacer()
+                                            Text("\(day.calories) cal")
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(.secondary)
+                                            Image(systemName: "chevron.right")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.tertiary)
+                                        }
+                                        .padding(12)
+                                        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 14))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.horizontal)
+                        }
+
+                        Text("Days containing diary entries are also marked with green dots in the week strip.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal)
+                    }
+                    .padding(.vertical, 12)
                 }
-                .padding(.top, 12)
-                .navigationTitle("Select Date")
+                .background(ThistleTheme.canvas.ignoresSafeArea())
+                .navigationTitle("Diary History")
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Done") {
@@ -138,6 +188,100 @@ struct DiaryView: View {
             }
             .presentationDetents([.medium, .large])
         }
+        .onChange(of: selectedDate) { _, newDate in
+            selectedDate = normalizedDate(newDate)
+        }
+    }
+
+    private var dateNavigationSection: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                Button {
+                    moveSelectedDate(by: -1)
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.headline.weight(.bold))
+                        .frame(width: 42, height: 42)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Previous day")
+
+                Button {
+                    showingDatePicker = true
+                } label: {
+                    VStack(spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(diaryHeaderTitle)
+                                .font(.headline)
+                            Image(systemName: "calendar")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        Text(selectedDate.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open diary calendar for \(diaryHeaderTitle)")
+
+                Button {
+                    moveSelectedDate(by: 1)
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.headline.weight(.bold))
+                        .frame(width: 42, height: 42)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isViewingToday)
+                .accessibilityLabel("Next day")
+            }
+
+            HStack(spacing: 4) {
+                ForEach(visibleWeekDates, id: \.self) { date in
+                    Button {
+                        selectDate(date)
+                    } label: {
+                        VStack(spacing: 5) {
+                            Text(date.formatted(.dateTime.weekday(.narrow)))
+                                .font(.caption2.weight(.semibold))
+                            Text(date.formatted(.dateTime.day()))
+                                .font(.subheadline.weight(.semibold))
+                                .frame(width: 32, height: 32)
+                                .background(
+                                    Calendar.current.isDate(date, inSameDayAs: selectedDate)
+                                        ? ThistleTheme.primaryGreen
+                                        : Color.clear,
+                                    in: Circle()
+                                )
+                                .foregroundStyle(
+                                    Calendar.current.isDate(date, inSameDayAs: selectedDate)
+                                        ? Color.white
+                                        : Color.primary
+                                )
+                            Circle()
+                                .fill(hasEntries(on: date) ? ThistleTheme.primaryGreen : Color.clear)
+                                .frame(width: 5, height: 5)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isFutureDate(date))
+                    .opacity(isFutureDate(date) ? 0.3 : 1)
+                    .accessibilityLabel(dayAccessibilityLabel(for: date))
+                }
+            }
+
+            if !isViewingToday {
+                Button("Today") {
+                    selectDate(.now)
+                }
+                .font(.subheadline.weight(.semibold))
+            }
+        }
+        .padding()
+        .background(ThistleTheme.card, in: RoundedRectangle(cornerRadius: 20))
     }
 
     private var selectedDayEntries: [LoggedFood] {
@@ -146,6 +290,38 @@ struct DiaryView: View {
 
     private var selectedDayNutrition: NutritionFacts {
         store.nutrition(on: selectedDate)
+    }
+
+    private var isViewingToday: Bool {
+        Calendar.current.isDateInToday(selectedDate)
+    }
+
+    private var visibleWeekDates: [Date] {
+        let calendar = Calendar.current
+        let selectedDay = normalizedDate(selectedDate)
+        let weekStart = calendar.dateInterval(of: .weekOfYear, for: selectedDay)?.start ?? selectedDay
+        return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: weekStart) }
+    }
+
+    private var recentDiaryDays: [DiaryDaySummary] {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: store.loggedFoods) { entry in
+            calendar.startOfDay(for: entry.loggedAt)
+        }
+        return grouped.map { date, entries in
+            DiaryDaySummary(
+                date: date,
+                entryCount: entries.count,
+                calories: entries.reduce(0) { $0 + $1.nutrition.calories }
+            )
+        }
+        .sorted { $0.date > $1.date }
+        .prefix(8)
+        .map { $0 }
+    }
+
+    private var foodLoggerButtonTitle: String {
+        isViewingToday ? "Log Food" : "Log Food for \(diaryHeaderTitle)"
     }
 
     private var diaryHeaderTitle: String {
@@ -157,6 +333,40 @@ struct DiaryView: View {
             return "Yesterday"
         }
         return selectedDate.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    private func normalizedDate(_ date: Date) -> Date {
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: date)
+        return min(day, calendar.startOfDay(for: .now))
+    }
+
+    private func selectDate(_ date: Date) {
+        selectedDate = normalizedDate(date)
+    }
+
+    private func moveSelectedDate(by dayOffset: Int) {
+        guard let date = Calendar.current.date(byAdding: .day, value: dayOffset, to: selectedDate) else { return }
+        selectDate(date)
+    }
+
+    private func hasEntries(on date: Date) -> Bool {
+        store.loggedFoods.contains { Calendar.current.isDate($0.loggedAt, inSameDayAs: date) }
+    }
+
+    private func isFutureDate(_ date: Date) -> Bool {
+        normalizedDate(date) < Calendar.current.startOfDay(for: date)
+    }
+
+    private func dayTitle(for date: Date) -> String {
+        if Calendar.current.isDateInToday(date) { return "Today" }
+        if Calendar.current.isDateInYesterday(date) { return "Yesterday" }
+        return date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+    }
+
+    private func dayAccessibilityLabel(for date: Date) -> String {
+        let entryDescription = hasEntries(on: date) ? ", has diary entries" : ", no diary entries"
+        return date.formatted(date: .complete, time: .omitted) + entryDescription
     }
 
     private var progressSection: some View {
@@ -390,6 +600,14 @@ struct DiaryView: View {
         case .cholesterol: return store.goals.cholesterolLimitMg
         }
     }
+}
+
+private struct DiaryDaySummary: Identifiable {
+    let date: Date
+    let entryCount: Int
+    let calories: Int
+
+    var id: Date { date }
 }
 
 struct LoggedFoodDetailView: View {

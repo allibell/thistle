@@ -102,6 +102,7 @@ final class AppStore: ObservableObject {
     private var semanticRankingTask: Task<Void, Never>?
     private var remoteSearchTask: Task<Void, Never>?
     private var persistenceTask: Task<Void, Never>?
+    private var rankingContextCache: [String: ProductRankingContext] = [:]
     private var pendingWidgetSnapshot = false
     private let searchLogger = Logger(subsystem: "com.allibell.thistle", category: "search")
 
@@ -222,11 +223,7 @@ final class AppStore: ObservableObject {
     }
 
     private func rankedProducts(_ products: [Product], limit: Int? = nil) -> [Product] {
-        let context = ProductRankingContext(
-            isActiveSearch: !activeSearchQuery.isEmpty,
-            normalizedQuery: normalizedComparableText(activeSearchQuery),
-            queryTerms: normalizedTerms(for: activeSearchQuery)
-        )
+        let context = productRankingContext(for: activeSearchQuery)
         let ranked = products
             .map { (product: $0, score: combinedRankingScore(for: $0, context: context)) }
             .sorted { lhs, rhs in
@@ -1189,18 +1186,10 @@ final class AppStore: ObservableObject {
     }
 
     func localProductSuggestions(matching query: String, limit: Int = 12) -> [Product] {
-        let context = ProductRankingContext(
-            isActiveSearch: true,
-            normalizedQuery: normalizedComparableText(query),
-            queryTerms: normalizedTerms(for: query)
-        )
-        return quickLocalCandidates(for: query, limit: limit * 2)
+        let context = productRankingContext(for: query)
+        return quickLocalCandidates(for: query, limit: limit * 4)
             .map { product in
-                var score = combinedRankingScore(for: product, context: context)
-                if isFavorite(product) { score += 90 }
-                if recentLoggedProductIDs.contains(product.id) { score += 50 }
-                score += usageCounts[product.id, default: 0] * 5
-                return (product, score)
+                (product, combinedRankingScore(for: product, context: context))
             }
             .sorted {
                 if $0.1 == $1.1 { return $0.0.lastUpdatedAt > $1.0.lastUpdatedAt }
@@ -1211,18 +1200,11 @@ final class AppStore: ObservableObject {
     }
 
     func rankedProductSuggestions(_ products: [Product], matching query: String, limit: Int = 18) -> [Product] {
-        let context = ProductRankingContext(
-            isActiveSearch: true,
-            normalizedQuery: normalizedComparableText(query),
-            queryTerms: normalizedTerms(for: query)
-        )
+        let context = productRankingContext(for: query)
         return deduplicatedProductsByID(products)
+            .filter { searchRelevance(for: $0, context: context).tier > 0 }
             .map { product in
-                var score = combinedRankingScore(for: product, context: context)
-                if isFavorite(product) { score += 4 }
-                if recentLoggedProductIDs.contains(product.id) { score += 3 }
-                score += min(3, usageCounts[product.id, default: 0])
-                return (product, score)
+                (product, combinedRankingScore(for: product, context: context))
             }
             .sorted {
                 if $0.1 == $1.1 { return $0.0.lastUpdatedAt > $1.0.lastUpdatedAt }
@@ -1240,17 +1222,26 @@ final class AppStore: ObservableObject {
         if let cached = searchCache[cacheKey],
            isFresh(cached.cachedAt, ttl: catalogCacheTTL),
            (!needsGenericFoodSource || cached.products.contains(where: { $0.source == .usda })) {
-            return Array(cached.products.map(withInferredStores).prefix(limit))
+            return rankedProductSuggestions(
+                cached.products.map(withInferredStores),
+                matching: trimmed,
+                limit: limit
+            )
         }
 
         let products = try await withTimeout(seconds: 6) { [catalogService] in
             try await catalogService.searchProducts(matching: trimmed)
         }
         let normalized = products.map(withInferredStores)
-        searchCache[cacheKey] = CachedProductList(products: normalized, cachedAt: .now)
-        mergeIntoCache(Array(normalized.prefix(limit)))
+        let ranked = rankedProductSuggestions(
+            normalized,
+            matching: trimmed,
+            limit: max(limit, normalized.count)
+        )
+        searchCache[cacheKey] = CachedProductList(products: ranked, cachedAt: .now)
+        mergeIntoCache(Array(ranked.prefix(limit)))
         persistState()
-        return Array(normalized.prefix(limit))
+        return Array(ranked.prefix(limit))
     }
 
     private func importWholeFoodsOrderFavorites(payload: String) async -> FavoriteImportRunResult {
@@ -1644,47 +1635,8 @@ final class AppStore: ObservableObject {
     private func matchesSearchQuery(_ product: Product) -> Bool {
         let trimmed = activeSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return true }
-
-        let queryTerms = normalizedTerms(for: trimmed)
-        guard !queryTerms.isEmpty else { return true }
-
-        let nameTerms = Set(normalizedTerms(for: product.name))
-        let brandTerms = Set(normalizedTerms(for: product.brand))
-        let storeTerms = Set(normalizedTerms(for: product.stores.joined(separator: " ")))
-
-        if queryTerms.count == 1, let term = queryTerms.first {
-            let strongIdentityMatch =
-                nameTerms.contains(term)
-                || brandTerms.contains(term)
-                || storeTerms.contains(term)
-                || nameTerms.contains(where: { isFuzzyTokenMatch(query: term, candidate: $0) })
-                || brandTerms.contains(where: { isFuzzyTokenMatch(query: term, candidate: $0) })
-                || storeTerms.contains(where: { isFuzzyTokenMatch(query: term, candidate: $0) })
-            if !strongIdentityMatch {
-                return false
-            }
-        }
-
-        let haystack = [
-            product.name,
-            product.brand,
-            product.barcode,
-            product.ingredients.joined(separator: " "),
-            product.stores.joined(separator: " ")
-        ]
-        .joined(separator: " ")
-        .lowercased()
-        let haystackTerms = normalizedTerms(for: haystack)
-
-        return queryTerms.allSatisfy { term in
-            if haystack.contains(term) {
-                return true
-            }
-
-            return haystackTerms.contains { candidate in
-                isFuzzyTokenMatch(query: term, candidate: candidate)
-            }
-        }
+        let context = productRankingContext(for: trimmed)
+        return searchRelevance(for: product, context: context).tier > 0
     }
 
     private func normalizedTerms(for string: String) -> [String] {
@@ -1745,6 +1697,115 @@ final class AppStore: ObservableObject {
         var isActiveSearch: Bool
         var normalizedQuery: String
         var queryTerms: [String]
+        var coreTerms: Set<String>
+    }
+
+    private struct ProductSearchRelevance {
+        var tier: Int
+        var scoreAdjustment: Int
+    }
+
+    private func productRankingContext(for query: String) -> ProductRankingContext {
+        let normalizedQuery = normalizedComparableText(query)
+        guard !normalizedQuery.isEmpty else {
+            return ProductRankingContext(
+                isActiveSearch: false,
+                normalizedQuery: "",
+                queryTerms: [],
+                coreTerms: []
+            )
+        }
+
+        if let cached = rankingContextCache[normalizedQuery] {
+            return cached
+        }
+
+        let queryTerms = normalizedTerms(for: normalizedQuery)
+        var coreTerms: Set<String> = []
+#if canImport(NaturalLanguage)
+        let tagger = NLTagger(tagSchemes: [.lexicalClass])
+        tagger.string = normalizedQuery
+        tagger.enumerateTags(
+            in: normalizedQuery.startIndex..<normalizedQuery.endIndex,
+            unit: .word,
+            scheme: .lexicalClass,
+            options: [.omitWhitespace, .omitPunctuation]
+        ) { tag, range in
+            if tag == .noun {
+                coreTerms.formUnion(normalizedTerms(for: String(normalizedQuery[range])))
+            }
+            return true
+        }
+#endif
+        if coreTerms.isEmpty, let fallback = queryTerms.last {
+            coreTerms = [fallback]
+        }
+
+        let context = ProductRankingContext(
+            isActiveSearch: true,
+            normalizedQuery: normalizedQuery,
+            queryTerms: queryTerms,
+            coreTerms: coreTerms
+        )
+        if rankingContextCache.count >= 64 {
+            rankingContextCache.removeAll(keepingCapacity: true)
+        }
+        rankingContextCache[normalizedQuery] = context
+        return context
+    }
+
+    private func searchRelevance(for product: Product, context: ProductRankingContext) -> ProductSearchRelevance {
+        guard context.isActiveSearch, !context.queryTerms.isEmpty else {
+            return ProductSearchRelevance(tier: 0, scoreAdjustment: 0)
+        }
+
+        let normalizedName = normalizedComparableText(product.name)
+        let nameTerms = Set(normalizedTerms(for: normalizedName))
+        let identityTerms = nameTerms.union(normalizedTerms(for: product.brand))
+        let supportingTerms = Set(normalizedTerms(for: product.ingredients.joined(separator: " ")))
+            .union(normalizedTerms(for: product.stores.joined(separator: " ")))
+
+        func matches(_ term: String, in candidates: Set<String>) -> Bool {
+            candidates.contains(term)
+                || candidates.contains(where: { isFuzzyTokenMatch(query: term, candidate: $0) })
+        }
+
+        let matchedNameTerms = context.queryTerms.filter { matches($0, in: nameTerms) }
+        let matchedIdentityTerms = context.queryTerms.filter { matches($0, in: identityTerms) }
+        let matchedCoreIdentityTerms = context.coreTerms.filter { matches($0, in: identityTerms) }
+        let matchedCoreSupportingTerms = context.coreTerms.filter { matches($0, in: supportingTerms) }
+        let modifierTerms = Set(context.queryTerms).subtracting(context.coreTerms)
+        let matchedModifiers = modifierTerms.filter { matches($0, in: nameTerms) }
+
+        let hasEveryCoreIdentityTerm = !context.coreTerms.isEmpty
+            && matchedCoreIdentityTerms.count == context.coreTerms.count
+        let tier: Int
+        if context.queryTerms.count > 1,
+           normalizedName == context.normalizedQuery {
+            tier = 7
+        } else if context.queryTerms.count > 1,
+                  normalizedName.contains(context.normalizedQuery) {
+            tier = 6
+        } else if matchedNameTerms.count == context.queryTerms.count {
+            tier = 5
+        } else if hasEveryCoreIdentityTerm, !matchedModifiers.isEmpty {
+            tier = 4
+        } else if hasEveryCoreIdentityTerm {
+            tier = 3
+        } else if !matchedCoreIdentityTerms.isEmpty {
+            tier = 2
+        } else if !matchedCoreSupportingTerms.isEmpty {
+            tier = 1
+        } else {
+            tier = 0
+        }
+
+        let missingTerms = max(0, context.queryTerms.count - matchedIdentityTerms.count)
+        let adjustment = (tier * 1_000)
+            + (matchedNameTerms.count * 35)
+            + (matchedModifiers.count * 20)
+            - (missingTerms * 15)
+        return ProductSearchRelevance(tier: tier, scoreAdjustment: adjustment)
     }
 
     private func combinedRankingScore(for product: Product, context: ProductRankingContext) -> Int {
@@ -1863,7 +1924,10 @@ final class AppStore: ObservableObject {
         }()
         let semanticBoost = isActiveSearch ? semanticRankingScores[product.id, default: 0] : 0
         let completenessPenalty = product.isLowConfidenceCatalogEntry ? -30 : 0
-        return favoriteBoost + recentBoost + usageBoost + completenessBoost + ratingBoost + queryBoost + sourceBoost + wholeFoodBoost + semanticBoost + postRankPersonalizationBoost + completenessPenalty
+        let relevanceBoost = isActiveSearch
+            ? searchRelevance(for: product, context: context).scoreAdjustment
+            : 0
+        return favoriteBoost + recentBoost + usageBoost + completenessBoost + ratingBoost + queryBoost + sourceBoost + wholeFoodBoost + semanticBoost + postRankPersonalizationBoost + completenessPenalty + relevanceBoost
     }
 
     private func isLikelyCompositeFoodName(_ normalizedName: String) -> Bool {
@@ -2693,33 +2757,24 @@ final class AppStore: ObservableObject {
     }
 
     private func quickLocalCandidates(for query: String, limit: Int) -> [Product] {
-        let normalizedQuery = normalizedComparableText(query)
-        guard !normalizedQuery.isEmpty else { return [] }
+        let context = productRankingContext(for: query)
+        guard context.isActiveSearch else { return [] }
 
-        let queryTerms = normalizedTerms(for: normalizedQuery)
-        guard !queryTerms.isEmpty else { return [] }
-
-        var matches: [Product] = []
-        matches.reserveCapacity(min(limit * 2, 120))
-
-        for product in localCatalog {
-            let haystack = normalizedComparableText("\(product.name) \(product.brand) \(product.stores.joined(separator: " "))")
-            guard !haystack.isEmpty else { continue }
-
-            let containsAllTerms = queryTerms.allSatisfy(haystack.contains)
-            let containsPrefixTerm = queryTerms.contains { term in
-                haystack.contains(" \(term)") || haystack.hasPrefix(term)
+        let ranked = localCatalog
+            .map(withInferredStores)
+            .map { product in
+                (product, searchRelevance(for: product, context: context))
             }
-
-            if containsAllTerms || containsPrefixTerm {
-                matches.append(withInferredStores(product))
-                if matches.count >= limit * 2 {
-                    break
+            .filter { $0.1.tier > 0 }
+            .sorted {
+                if $0.1.scoreAdjustment == $1.1.scoreAdjustment {
+                    return $0.0.lastUpdatedAt > $1.0.lastUpdatedAt
                 }
+                return $0.1.scoreAdjustment > $1.1.scoreAdjustment
             }
-        }
+            .map(\.0)
 
-        return Array(deduplicatedProductsByID(matches).prefix(limit))
+        return Array(deduplicatedProductsByID(ranked).prefix(limit))
     }
 
     private func parseWholeFoodsOrderItems(from payload: String, maxItems: Int) -> [ParsedOrderItem] {

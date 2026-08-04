@@ -30,11 +30,14 @@ struct QuickLogSheet: View {
     @State private var aiStatusMessage: String?
     @State private var aiErrorMessage: String?
     @State private var showingOpenAISettings = false
+    @State private var showingManualEstimate = false
 
     var body: some View {
         NavigationStack {
             Form {
-                plateSection
+                if !plateItems.isEmpty {
+                    plateSection
+                }
 
                 Section {
                     Picker("Logger", selection: $mode) {
@@ -60,7 +63,25 @@ struct QuickLogSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
-                ToolbarItem(placement: .confirmationAction) {
+                ToolbarItemGroup(placement: .confirmationAction) {
+                    Menu {
+                        Button {
+                            mode = .describe
+                            showingManualEstimate = true
+                        } label: {
+                            Label("Enter nutrition manually", systemImage: "square.and.pencil")
+                        }
+
+                        Button {
+                            showingOpenAISettings = true
+                        } label: {
+                            Label("AI settings", systemImage: "gearshape")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .accessibilityLabel("More logging options")
+
                     Button(plateItems.isEmpty ? "Log" : "Log \(plateItems.count)") {
                         logPlate()
                     }
@@ -81,64 +102,51 @@ struct QuickLogSheet: View {
 
     private var plateSection: some View {
         Section {
-            if plateItems.isEmpty {
-                ContentUnavailableView(
-                    "Your plate is empty",
-                    systemImage: "fork.knife",
-                    description: Text("Search, scan, or describe foods below. Log everything together when you’re done.")
-                )
-            } else {
-                ForEach($plateItems) { $item in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(alignment: .firstTextBaseline) {
+            ForEach($plateItems) { $item in
+                HStack(spacing: 10) {
+                    NavigationLink {
+                        FoodDraftEditorView(item: $item)
+                            .environmentObject(store)
+                    } label: {
+                        HStack(alignment: .center, spacing: 10) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(item.title)
                                     .font(.subheadline.weight(.semibold))
-                                Text(item.sourceLabel)
+                                    .lineLimit(2)
+                                Text(plateItemSubtitle(item))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
                             Text("\(item.nutrition.calories) cal")
-                                .font(.subheadline.weight(.semibold))
+                                .font(.caption.weight(.semibold))
                                 .monospacedDigit()
                         }
-
-                        Stepper(value: $item.servings, in: 0.5...12, step: 0.5) {
-                            Text("\(item.servings.formatted(.number.precision(.fractionLength(0...1)))) serving\(item.servings == 1 ? "" : "s")")
-                                .font(.caption)
-                        }
-
-                        if let confidence = item.confidence {
-                            Text("AI confidence: \(Int((confidence * 100).rounded()))%")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        if !item.components.isEmpty {
-                            Label("\(item.components.count) component\(item.components.count == 1 ? "" : "s")", systemImage: "square.stack.3d.up")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        NavigationLink {
-                            FoodDraftEditorView(item: $item)
-                                .environmentObject(store)
-                        } label: {
-                            Label("Review or replace", systemImage: "slider.horizontal.3")
-                                .font(.caption.weight(.semibold))
-                        }
                     }
-                    .padding(.vertical, 3)
-                }
-                .onDelete { offsets in
-                    plateItems.remove(atOffsets: offsets)
-                }
+                    .buttonStyle(.plain)
 
-                MacroSummaryView(nutrition: plateNutrition)
-                    .listRowInsets(EdgeInsets())
-                    .padding(.vertical, 6)
+                    Stepper(value: $item.servings, in: 0.1...100, step: 0.1) {
+                        EmptyView()
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    .accessibilityLabel("Servings for \(item.title)")
+                }
+                .contextMenu {
+                    Button(role: .destructive) {
+                        removePlateItem(id: item.id)
+                    } label: {
+                        Label("Remove from plate", systemImage: "trash")
+                    }
+                }
             }
+            .onDelete { offsets in
+                plateItems.remove(atOffsets: offsets)
+            }
+
+            MacroSummaryView(nutrition: plateNutrition)
+                .listRowInsets(EdgeInsets())
+                .padding(.vertical, 4)
         } header: {
             HStack {
                 Text("Current Plate")
@@ -150,16 +158,28 @@ struct QuickLogSheet: View {
         }
     }
 
+    private func plateItemSubtitle(_ item: FoodLogDraftItem) -> String {
+        let componentText = item.components.isEmpty
+            ? nil
+            : "\(item.components.count) component\(item.components.count == 1 ? "" : "s")"
+        return [item.servingText, componentText].compactMap { $0 }.joined(separator: " · ")
+    }
+
     @ViewBuilder
     private var searchSection: some View {
-        Section {
-            TextField("Food, brand, or ingredient", text: $searchText)
-                .textInputAutocapitalization(.never)
-                .onSubmit { searchOnline() }
-                .onChange(of: searchText) { _, _ in
-                    onlineResults = []
-                    searchError = nil
-                }
+        Section("Find a food") {
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Food, dish, or brand", text: $searchText)
+                    .textInputAutocapitalization(.never)
+                    .submitLabel(.search)
+                    .onSubmit { searchOnline() }
+                    .onChange(of: searchText) { _, _ in
+                        onlineResults = []
+                        searchError = nil
+                    }
+            }
 
             Button {
                 searchOnline()
@@ -177,10 +197,6 @@ struct QuickLogSheet: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-        } header: {
-            Text("Search")
-        } footer: {
-            Text("Saved, favorite, and recent foods appear immediately. Use online search only when needed.")
         }
 
         if !productSearchResults.isEmpty {
@@ -229,50 +245,24 @@ struct QuickLogSheet: View {
     @ViewBuilder
     private var describeSection: some View {
         let suggestions = store.rememberedEstimateSuggestions(matching: descriptionText)
-        if !suggestions.isEmpty {
-            Section("Remembered") {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(suggestions) { suggestion in
-                            Button {
-                                applyRemembered(suggestion)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(suggestion.description)
-                                        .lineLimit(1)
-                                    Text("\(suggestion.nutrition.calories) cal")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 8)
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
-                }
-            }
-        }
-
-        Section {
+        Section("Describe what you ate") {
             TextField(
-                "Paste a whole food log, or describe everything you ate…",
+                "For example: tahini squash bowl from Cafe Réveille",
                 text: $descriptionText,
                 axis: .vertical
             )
-            .lineLimit(4...12)
+            .lineLimit(3...8)
 
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Button {
                     toggleVoiceRecording()
                 } label: {
-                    Label(
-                        voiceRecorder.isRecording ? "Stop recording" : "Speak",
-                        systemImage: voiceRecorder.isRecording ? "stop.circle.fill" : "mic.circle.fill"
-                    )
-                    .foregroundStyle(voiceRecorder.isRecording ? ThistleTheme.danger : ThistleTheme.primaryGreen)
+                    Image(systemName: voiceRecorder.isRecording ? "stop.circle.fill" : "mic.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(voiceRecorder.isRecording ? ThistleTheme.danger : ThistleTheme.primaryGreen)
                 }
                 .disabled(isAIWorking)
+                .accessibilityLabel(voiceRecorder.isRecording ? "Stop recording" : "Describe by voice")
 
                 if voiceRecorder.isRecording {
                     Text(voiceRecorder.duration.formatted(.number.precision(.fractionLength(1))) + "s")
@@ -282,12 +272,19 @@ struct QuickLogSheet: View {
 
                 Spacer()
 
-                Button {
-                    showingOpenAISettings = true
-                } label: {
-                    Image(systemName: "gearshape")
+                if !suggestions.isEmpty {
+                    Menu {
+                        ForEach(suggestions) { suggestion in
+                            Button {
+                                applyRemembered(suggestion)
+                            } label: {
+                                Text("\(suggestion.description) · \(suggestion.nutrition.calories) cal")
+                            }
+                        }
+                    } label: {
+                        Label("Recent", systemImage: "clock.arrow.circlepath")
+                    }
                 }
-                .accessibilityLabel("OpenAI settings")
             }
 
             Button {
@@ -299,17 +296,12 @@ struct QuickLogSheet: View {
                         Text("Analyzing…")
                     }
                 } else {
-                    Label("Analyze into editable items", systemImage: "sparkles")
+                    Label("Add editable items", systemImage: "sparkles")
                 }
             }
+            .buttonStyle(.borderedProminent)
+            .tint(ThistleTheme.primaryGreen)
             .disabled(descriptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAIWorking)
-
-            Button {
-                estimateLocally()
-            } label: {
-                Label("Use quick local estimate", systemImage: "function")
-            }
-            .disabled(descriptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
             if let aiStatusMessage {
                 Label(aiStatusMessage, systemImage: "checkmark.circle.fill")
@@ -322,30 +314,37 @@ struct QuickLogSheet: View {
                     .font(.footnote)
                     .foregroundStyle(ThistleTheme.danger)
             }
-
-            if let estimateMessage {
-                Text(estimateMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        } header: {
-            Text("Describe")
-        } footer: {
-            Text("AI creates a draft only. Review every item and serving above before tapping Log. Voice recordings are deleted after transcription.")
         }
 
-        Section("Editable Nutrition") {
-            nutritionField("Calories", text: $caloriesText, unit: "kcal")
-            nutritionField("Protein", text: $proteinText, unit: "g")
-            nutritionField("Carbs", text: $carbsText, unit: "g")
-            nutritionField("Fat", text: $fatText, unit: "g")
+        if showingManualEstimate {
+            Section("Manual estimate") {
+                Button {
+                    estimateLocally()
+                } label: {
+                    Label("Suggest nutrition from description", systemImage: "function")
+                }
+                .disabled(descriptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-            Button {
-                addEstimateToPlate()
-            } label: {
-                Label("Add to Plate", systemImage: "plus.circle.fill")
+                nutritionField("Calories", text: $caloriesText, unit: "kcal")
+                nutritionField("Protein", text: $proteinText, unit: "g")
+                nutritionField("Carbs", text: $carbsText, unit: "g")
+                nutritionField("Fat", text: $fatText, unit: "g")
+
+                Button {
+                    addEstimateToPlate()
+                } label: {
+                    Label("Add to Plate", systemImage: "plus.circle.fill")
+                }
+                .disabled(parsedCalories == nil)
+
+                if let estimateMessage {
+                    DisclosureGroup("Estimate details") {
+                        Text(estimateMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
-            .disabled(parsedCalories == nil)
         }
     }
 
@@ -391,6 +390,13 @@ struct QuickLogSheet: View {
             .foregroundStyle(ThistleTheme.primaryGreen)
             .accessibilityLabel("Add \(product.name) to plate")
         }
+        .contextMenu {
+            Button {
+                addProductToPlate(product)
+            } label: {
+                Label("Add to Plate", systemImage: "plus")
+            }
+        }
     }
 
     private func nutritionField(_ title: String, text: Binding<String>, unit: String) -> some View {
@@ -435,6 +441,12 @@ struct QuickLogSheet: View {
         if mode == .scan {
             scannedCode = nil
             store.resetBarcodeLookupState(clearManualBarcode: false)
+        }
+    }
+
+    private func removePlateItem(id: String) {
+        withAnimation {
+            plateItems.removeAll { $0.id == id }
         }
     }
 
