@@ -410,7 +410,8 @@ struct DiaryView: View {
     }
 
     private func diaryCard(entry: LoggedFood) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let currentAnalysis = store.analysis(for: entry)
+        return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(entry.title)
@@ -419,7 +420,7 @@ struct DiaryView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                RatingBadge(rating: entry.analysis.rating)
+                RatingBadge(rating: currentAnalysis.rating)
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
@@ -427,10 +428,10 @@ struct DiaryView: View {
 
             MacroSummaryView(nutrition: entry.nutrition)
 
-            if !entry.analysis.flags.isEmpty {
-                Text(entry.analysis.flags.map(\.ingredient).joined(separator: ", "))
+            if !currentAnalysis.flags.isEmpty {
+                Text(currentAnalysis.flags.map(\.ingredient).joined(separator: ", "))
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(entry.analysis.rating.color)
+                    .foregroundStyle(currentAnalysis.rating.color)
             }
         }
         .padding()
@@ -624,6 +625,7 @@ struct LoggedFoodDetailView: View {
     var body: some View {
         ScrollView {
             if let entry {
+                let currentAnalysis = store.analysis(for: entry)
                 VStack(alignment: .leading, spacing: 16) {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(alignment: .top) {
@@ -637,7 +639,7 @@ struct LoggedFoodDetailView: View {
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
-                            RatingBadge(rating: entry.analysis.rating)
+                            RatingBadge(rating: currentAnalysis.rating)
                         }
                         MacroSummaryView(nutrition: entry.nutrition)
                     }
@@ -646,11 +648,11 @@ struct LoggedFoodDetailView: View {
 
                     IngredientsSection(
                         ingredients: resolvedIngredients(for: entry),
-                        analysis: entry.analysis,
+                        analysis: currentAnalysis,
                         ingredientsAreEstimated: entry.sourceProductID == nil && linkedProduct(for: entry) == nil
                     )
 
-                    RatingExplanationView(analysis: entry.analysis)
+                    RatingExplanationView(analysis: currentAnalysis)
 
                     let components = resolvedComponents(for: entry)
                     if !components.isEmpty {
@@ -723,7 +725,7 @@ struct LoggedFoodDetailView: View {
 
     private func resolvedComponents(for entry: LoggedFood) -> [FoodItemComponent] {
         if let components = entry.components, !components.isEmpty {
-            return components
+            return components.map(store.applyingCurrentAnalysis(to:))
         }
 
         guard entry.sourceProductIDs.count > 1 else { return [] }

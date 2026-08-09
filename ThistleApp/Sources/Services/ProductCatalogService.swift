@@ -455,10 +455,11 @@ private struct OpenFoodFactsProduct: Decodable {
         guard !resolvedName.isEmpty else { return nil }
 
         let barcode = (code ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let ingredientList = ingredientsText?
+        let rawIngredientList = ingredientsText?
             .split(whereSeparator: { $0 == "," || $0 == ";" })
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty } ?? []
+        let ingredientList = IngredientEvidenceParser.normalizedStorageValues(from: rawIngredientList)
         let storeList = stores?
             .split(whereSeparator: { $0 == "," || $0 == ";" })
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

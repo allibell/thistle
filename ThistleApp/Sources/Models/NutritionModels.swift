@@ -21,6 +21,7 @@ enum DietProfile: String, CaseIterable, Identifiable, Codable {
 }
 
 enum DietaryRestriction: String, CaseIterable, Identifiable, Codable, Hashable {
+    case noAddedSugar = "No added sugar"
     case glutenFree = "Gluten-free"
     case dairyFree = "Dairy-free"
     case eggFree = "Egg-free"
@@ -30,6 +31,8 @@ enum DietaryRestriction: String, CaseIterable, Identifiable, Codable, Hashable {
 
     var detail: String {
         switch self {
+        case .noAddedSugar:
+            "Avoids foods whose Nutrition Facts report more than 0 g added sugar. Naturally occurring sugar is allowed."
         case .glutenFree:
             "Avoids ingredients derived from wheat, barley, and rye."
         case .dairyFree:
@@ -39,6 +42,104 @@ enum DietaryRestriction: String, CaseIterable, Identifiable, Codable, Hashable {
         case .soyFree:
             "Avoids soy and soy-derived ingredients."
         }
+    }
+}
+
+struct IngredientEvidence: Hashable, Sendable {
+    var ingredients: [String]
+    var crossContactAdvisories: [String]
+}
+
+enum IngredientEvidenceParser {
+    private static let advisoryMarkers = [
+        "may contain traces of",
+        "may contain trace of",
+        "may contain",
+        "contains traces of",
+        "contains trace of",
+        "processed in a facility",
+        "manufactured in a facility",
+        "made in a facility",
+        "produced in a facility",
+        "manufactured on equipment",
+        "made on equipment",
+        "shared equipment"
+    ]
+
+    static func parse(_ values: [String]) -> IngredientEvidence {
+        var ingredients: [String] = []
+        var advisoryParts: [String] = []
+        var isReadingAdvisory = false
+
+        for rawValue in values {
+            let value = normalize(rawValue)
+            guard !value.isEmpty else { continue }
+
+            if let range = firstAdvisoryRange(in: value) {
+                let ingredientPrefix = cleanFragment(String(value[..<range.lowerBound]))
+                if !ingredientPrefix.isEmpty {
+                    ingredients.append(ingredientPrefix)
+                }
+
+                let advisoryStart = cleanFragment(String(value[range.lowerBound...]))
+                if !advisoryStart.isEmpty {
+                    advisoryParts.append(advisoryStart)
+                }
+                isReadingAdvisory = true
+            } else if isReadingAdvisory {
+                advisoryParts.append(cleanFragment(value))
+            } else {
+                ingredients.append(cleanFragment(value))
+            }
+        }
+
+        let advisories: [String]
+        if advisoryParts.isEmpty {
+            advisories = []
+        } else {
+            advisories = [advisoryParts.filter { !$0.isEmpty }.joined(separator: ", ")]
+        }
+
+        return IngredientEvidence(
+            ingredients: ingredients.filter { !$0.isEmpty },
+            crossContactAdvisories: advisories
+        )
+    }
+
+    static func normalizedStorageValues(from values: [String]) -> [String] {
+        let evidence = parse(values)
+        return evidence.ingredients + evidence.crossContactAdvisories
+    }
+
+    static func isUnevaluatedDescriptor(_ value: String) -> Bool {
+        let normalized = value.lowercased()
+        return [
+            "smoke",
+            "natural flavor",
+            "natural flavour",
+            "artificial flavor",
+            "artificial flavour",
+            "flavoring",
+            "flavouring",
+            "spices",
+            "seasoning"
+        ].contains { normalized.contains($0) }
+    }
+
+    private static func firstAdvisoryRange(in value: String) -> Range<String.Index>? {
+        advisoryMarkers
+            .compactMap { value.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) }
+            .min { $0.lowerBound < $1.lowerBound }
+    }
+
+    private static func normalize(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func cleanFragment(_ value: String) -> String {
+        value.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",;.")))
     }
 }
 
@@ -507,7 +608,7 @@ struct Product: Identifiable, Hashable, Codable, Sendable {
     }
 
     var hasIngredientDetails: Bool {
-        ingredients.contains { ingredient in
+        IngredientEvidenceParser.parse(ingredients).ingredients.contains { ingredient in
             let normalized = ingredient
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased()

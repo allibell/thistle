@@ -546,7 +546,7 @@ private struct WebFallbackClient: Sendable {
             }
         }
 
-        return (combinedIngredients, nutrition, brand)
+        return (IngredientEvidenceParser.normalizedStorageValues(from: combinedIngredients), nutrition, brand)
     }
 
     private func extractIngredients(from text: String) -> [String] {
@@ -560,7 +560,7 @@ private struct WebFallbackClient: Sendable {
             .replacingOccurrences(of: "(?i)^ingredients?\\s*[:\\-]?", with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        return cleaned
+        let extracted = cleaned
             .split(whereSeparator: { $0 == "," || $0 == ";" })
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty && $0.count < 80 }
@@ -569,6 +569,7 @@ private struct WebFallbackClient: Sendable {
                 let placeholders: Set<String> = ["undefined", "unknown", "n/a", "na", "none", "missing"]
                 return !placeholders.contains(normalized)
             }
+        return IngredientEvidenceParser.normalizedStorageValues(from: extracted)
     }
 
     private func extractNutrition(from text: String) -> NutritionFacts {

@@ -150,7 +150,7 @@ struct SearchView: View {
                     }
                     .pickerStyle(.menu)
 
-                    Text("Ingredient restrictions")
+                    Text("Food restrictions")
                         .font(.subheadline.weight(.semibold))
 
                     ForEach(DietaryRestriction.allCases) { restriction in

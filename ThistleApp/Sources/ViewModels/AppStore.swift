@@ -561,6 +561,132 @@ final class AppStore: ObservableObject {
         return computed
     }
 
+    /// Re-evaluates a diary snapshot against the preferences selected right now. The analysis
+    /// stored on LoggedFood remains useful provenance, but must not freeze a former diet rating.
+    func analysis(for entry: LoggedFood) -> ProductAnalysis {
+        let linkedProduct = entry.sourceProductID.flatMap(product(withID:))
+            ?? (entry.sourceProductIDs.count == 1 ? entry.sourceProductIDs.first.flatMap(product(withID:)) : nil)
+        let capturedIngredients = entry.ingredients ?? []
+        let componentIngredients = entry.components?.flatMap(allIngredients(in:)) ?? []
+        let ingredients: [String]
+        if linkedProduct?.hasIngredientDetails == true {
+            ingredients = linkedProduct?.ingredients ?? []
+        } else if !capturedIngredients.isEmpty {
+            ingredients = capturedIngredients
+        } else {
+            ingredients = componentIngredients
+        }
+
+        let snapshot = Product(
+            id: "logged:\(entry.id)",
+            source: .manual,
+            name: entry.title,
+            brand: linkedProduct?.brand ?? "Diary",
+            barcode: linkedProduct?.barcode ?? "",
+            stores: linkedProduct?.stores ?? [],
+            servingDescription: entry.servingText,
+            ingredients: ingredients,
+            nutrition: entry.nutrition,
+            lastUpdatedAt: linkedProduct?.lastUpdatedAt ?? entry.loggedAt
+        )
+        return currentAnalysis(for: snapshot, preserving: entry.analysis)
+    }
+
+    func analysis(for component: FoodItemComponent) -> ProductAnalysis {
+        let linkedProduct = component.sourceProductID.flatMap(product(withID:))
+        let capturedIngredients = component.ingredients ?? []
+        let ingredients = linkedProduct?.hasIngredientDetails == true
+            ? linkedProduct?.ingredients ?? []
+            : capturedIngredients + component.components.flatMap(allIngredients(in:))
+        let snapshot = Product(
+            id: "logged-component:\(component.id)",
+            source: .manual,
+            name: component.title,
+            brand: linkedProduct?.brand ?? "Diary",
+            barcode: linkedProduct?.barcode ?? "",
+            stores: linkedProduct?.stores ?? [],
+            servingDescription: component.servingText,
+            ingredients: ingredients,
+            nutrition: component.nutrition,
+            lastUpdatedAt: linkedProduct?.lastUpdatedAt ?? .distantPast
+        )
+        return currentAnalysis(for: snapshot, preserving: component.analysis)
+    }
+
+    func applyingCurrentAnalysis(to component: FoodItemComponent) -> FoodItemComponent {
+        var updated = component
+        updated.analysis = analysis(for: component)
+        updated.components = component.components.map(applyingCurrentAnalysis(to:))
+        return updated
+    }
+
+    private func currentAnalysis(
+        for snapshot: Product,
+        preserving recordedAnalysis: ProductAnalysis
+    ) -> ProductAnalysis {
+        let current = analyzer.analyze(
+            product: snapshot,
+            for: selectedDiet,
+            restrictions: dietaryRestrictions
+        )
+        let preservedFlags = recordedAnalysis.flags.filter(shouldPreserveRecordedFlag)
+        let flags = deduplicatedAnalysisFlags(current.flags + preservedFlags)
+
+        var rating = rating(for: flags)
+        let recordedSummaryIsUncertain = describesEstimateUncertainty(recordedAnalysis.summary)
+        if rating == .green, recordedSummaryIsUncertain || !preservedFlags.isEmpty {
+            rating = .yellow
+        }
+
+        var summary = current.summary
+        if recordedSummaryIsUncertain {
+            summary += " Nutrition or portions remain estimated."
+        } else if !preservedFlags.isEmpty {
+            summary += " Recorded uncertainty still needs review."
+        }
+        return ProductAnalysis(rating: rating, summary: summary, flags: flags)
+    }
+
+    private func allIngredients(in component: FoodItemComponent) -> [String] {
+        (component.ingredients ?? []) + component.components.flatMap(allIngredients(in:))
+    }
+
+    private func shouldPreserveRecordedFlag(_ flag: IngredientFlag) -> Bool {
+        let reason = flag.reason.lowercased()
+        let uncertaintyTerms = [
+            "unknown", "not captured", "not published", "not provided", "may include",
+            "verify", "estimated", "inferred", "uncertain", "exact recipe"
+        ]
+        if uncertaintyTerms.contains(where: reason.contains) {
+            return true
+        }
+
+        let preferenceTerms = DietProfile.allCases.map { $0.rawValue.lowercased() }
+            + DietaryRestriction.allCases.map { $0.rawValue.lowercased() }
+            + ["selected diet", "diet preference", "conflicts with your"]
+        return !preferenceTerms.contains(where: reason.contains)
+    }
+
+    private func describesEstimateUncertainty(_ summary: String) -> Bool {
+        let lowered = summary.lowercased()
+        return ["estimate", "confidence", "uncertain", "inferred", "not provided", "unknown"]
+            .contains(where: lowered.contains)
+    }
+
+    private func deduplicatedAnalysisFlags(_ flags: [IngredientFlag]) -> [IngredientFlag] {
+        var seen: Set<String> = []
+        return flags.filter { flag in
+            let key = "\(flag.ingredient.lowercased())|\(flag.reason.lowercased())|\(flag.severity.rawValue)"
+            return seen.insert(key).inserted
+        }
+    }
+
+    private func rating(for flags: [IngredientFlag]) -> ComplianceRating {
+        if flags.contains(where: { $0.severity == .avoid }) { return .red }
+        if flags.contains(where: { $0.severity == .caution }) { return .yellow }
+        return .green
+    }
+
     /// Applies the same diet rules used for catalog products to ingredient evidence inferred by
     /// free-form logging. Estimate uncertainty remains cautionary even when no conflict is found.
     func applyingIngredientAnalysis(to draftItem: FoodLogDraftItem) -> FoodLogDraftItem {

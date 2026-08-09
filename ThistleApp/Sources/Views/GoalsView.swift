@@ -23,7 +23,7 @@ struct GoalsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Ingredient Restrictions") {
+            Section("Food Restrictions") {
                 ForEach(DietaryRestriction.allCases) { restriction in
                     Toggle(isOn: restrictionBinding(restriction)) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -35,7 +35,7 @@ struct GoalsView: View {
                     }
                 }
 
-                Text("Checks are based on listed ingredients and cannot verify cross-contact or facility warnings.")
+                Text("Ingredient checks use the listed ingredients; No added sugar uses the Nutrition Facts value. Cross-contact and facility warnings cannot be verified.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

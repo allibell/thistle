@@ -14,27 +14,38 @@ struct IngredientAnalyzer {
             )
         }
 
-        if !product.hasIngredientDetails {
-            return ProductAnalysis(
-                rating: .yellow,
-                summary: "This entry is missing ingredients, so compatibility cannot be verified.",
-                flags: [
-                    IngredientFlag(
-                        ingredient: "Missing ingredients",
-                        severity: .caution,
-                        reason: "No ingredient list is available for this product."
-                    )
-                ]
-            )
-        }
+        var evaluatedProduct = product
+        evaluatedProduct.ingredients = IngredientEvidenceParser.parse(product.ingredients).ingredients
 
         var analyses: [ProductAnalysis] = []
-        if let diet {
-            analyses.append(analyze(product: product, for: diet))
+        if restrictions.contains(.noAddedSugar) {
+            analyses.append(analyzeAddedSugar(product: evaluatedProduct))
         }
-        analyses.append(contentsOf: restrictions.sorted { $0.rawValue < $1.rawValue }.map {
-            analyze(product: product, for: $0)
-        })
+
+        let ingredientRestrictions = restrictions.subtracting([.noAddedSugar])
+        let requiresIngredients = diet != nil || !ingredientRestrictions.isEmpty
+        if requiresIngredients, !evaluatedProduct.hasIngredientDetails {
+            analyses.append(
+                ProductAnalysis(
+                    rating: .yellow,
+                    summary: "This entry is missing ingredients, so compatibility cannot be verified.",
+                    flags: [
+                        IngredientFlag(
+                            ingredient: "Missing ingredients",
+                            severity: .caution,
+                            reason: "No ingredient list is available for this product."
+                        )
+                    ]
+                )
+            )
+        } else {
+            if let diet {
+                analyses.append(analyze(product: evaluatedProduct, for: diet))
+            }
+            analyses.append(contentsOf: ingredientRestrictions.sorted { $0.rawValue < $1.rawValue }.map {
+                analyze(product: evaluatedProduct, for: $0)
+            })
+        }
 
         let flags = analyses.flatMap(\.flags)
         let rating: ComplianceRating
@@ -100,6 +111,8 @@ struct IngredientAnalyzer {
 
     private func analyze(product: Product, for restriction: DietaryRestriction) -> ProductAnalysis {
         switch restriction {
+        case .noAddedSugar:
+            return analyzeAddedSugar(product: product)
         case .glutenFree:
             return basicProfile(
                 product: product,
@@ -132,6 +145,31 @@ struct IngredientAnalyzer {
                 profileName: restriction.rawValue
             )
         }
+    }
+
+    private func analyzeAddedSugar(product: Product) -> ProductAnalysis {
+        guard product.nutrition.addedSugars > 0.0001 else {
+            return ProductAnalysis(
+                rating: .green,
+                summary: "Nutrition Facts report 0 g added sugar.",
+                flags: []
+            )
+        }
+
+        let amount = product.nutrition.addedSugars.formatted(
+            .number.precision(.fractionLength(0...1))
+        )
+        return ProductAnalysis(
+            rating: .red,
+            summary: "Nutrition Facts report added sugar.",
+            flags: [
+                IngredientFlag(
+                    ingredient: "\(amount) g added sugar",
+                    severity: .avoid,
+                    reason: "This serving reports \(amount) g added sugar, which conflicts with No added sugar."
+                )
+            ]
+        )
     }
 
     private func analyzeWhole30(product: Product) -> ProductAnalysis {

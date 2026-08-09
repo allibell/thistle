@@ -157,20 +157,24 @@ struct IngredientsSection: View {
         self.ingredientsAreEstimated = ingredientsAreEstimated
     }
 
+    private var evidence: IngredientEvidence {
+        IngredientEvidenceParser.parse(ingredients)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Ingredients")
                     .font(.headline)
                 Spacer()
-                if ingredientsAreEstimated, !ingredients.isEmpty {
+                if ingredientsAreEstimated, !evidence.ingredients.isEmpty {
                     Text("ESTIMATED")
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(ThistleTheme.warning)
                 }
             }
 
-            if ingredients.isEmpty {
+            if evidence.ingredients.isEmpty {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "questionmark.circle.fill")
                         .foregroundStyle(ThistleTheme.warning)
@@ -185,14 +189,15 @@ struct IngredientsSection: View {
                 }
             }
 
-            ForEach(ingredients, id: \.self) { ingredient in
+            ForEach(evidence.ingredients, id: \.self) { ingredient in
                 let matchedFlag = analysis.flags.first { flag in
                     flag.ingredient.localizedCaseInsensitiveContains(ingredient)
                         || ingredient.localizedCaseInsensitiveContains(flag.ingredient)
                 }
                 // Compliance color and evidence confidence are separate dimensions: an inferred
                 // ingredient can still be compatible with the selected diet.
-                let defaultColor = ThistleTheme.primaryGreen
+                let isUnevaluated = IngredientEvidenceParser.isUnevaluatedDescriptor(ingredient)
+                let defaultColor: Color = isUnevaluated ? .secondary : ThistleTheme.primaryGreen
                 HStack(alignment: .top, spacing: 8) {
                     Circle()
                         .fill((matchedFlag?.severity.color ?? defaultColor).opacity(0.9))
@@ -201,13 +206,40 @@ struct IngredientsSection: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(ingredient)
                             .fontWeight(matchedFlag?.severity.fontWeight ?? .regular)
-                            .foregroundStyle(matchedFlag?.severity.color ?? Color.primary)
+                            .foregroundStyle(matchedFlag?.severity.color ?? (isUnevaluated ? Color.secondary : Color.primary))
                         if let matchedFlag {
                             Text(matchedFlag.reason)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         } else if ingredientsAreEstimated {
                             Text("Inferred; verify if the exact recipe matters.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if isUnevaluated {
+                            Text("Processing or flavor descriptor; not evaluated as a dietary conflict.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            if !evidence.crossContactAdvisories.isEmpty {
+                Divider()
+                    .padding(.vertical, 2)
+                Text("Cross-contact")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ForEach(evidence.crossContactAdvisories, id: \.self) { advisory in
+                    HStack(alignment: .top, spacing: 8) {
+                        Circle()
+                            .fill(Color.secondary.opacity(0.7))
+                            .frame(width: 8, height: 8)
+                            .padding(.top, 6)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(advisory)
+                                .foregroundStyle(.secondary)
+                            Text("Advisory only; not used for dietary preference ratings. Check the label if you manage a severe allergy.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
