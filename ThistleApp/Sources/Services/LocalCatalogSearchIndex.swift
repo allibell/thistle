@@ -120,7 +120,7 @@ actor LocalCatalogSearchIndex {
         FROM indexed_products_fts f
         JOIN indexed_products p ON p.id = f.id
         WHERE indexed_products_fts MATCH ?
-        ORDER BY bm25(indexed_products_fts, 8.0, 5.0, 2.0, 1.5, 1.2, 1.0)
+        ORDER BY bm25(indexed_products_fts, 0.0, 12.0, 8.0, 5.0, 2.0, 0.75, 4.0)
         LIMIT ?;
         """
 
@@ -136,6 +136,23 @@ actor LocalCatalogSearchIndex {
         while sqlite3_step(statement) == SQLITE_ROW {
             if let product = product(from: statement) {
                 products.append(product)
+            }
+        }
+
+        // Strict token matching is best for precision. If it finds nothing, allow partial
+        // multi-word matches and let the app's identity ranker decide what is worth surfacing.
+        if products.isEmpty {
+            let relaxedQuery = buildFTSQuery(from: query, joiner: " OR ")
+            if relaxedQuery != ftsQuery {
+                sqlite3_reset(statement)
+                sqlite3_clear_bindings(statement)
+                bindText(relaxedQuery, to: 1, in: statement)
+                sqlite3_bind_int(statement, 2, Int32(max(1, limit)))
+                while sqlite3_step(statement) == SQLITE_ROW {
+                    if let product = product(from: statement) {
+                        products.append(product)
+                    }
+                }
             }
         }
         return products
@@ -404,13 +421,27 @@ actor LocalCatalogSearchIndex {
         return String(cString: cString)
     }
 
-    private func buildFTSQuery(from text: String) -> String {
+    private func buildFTSQuery(from text: String, joiner: String = " ") -> String {
         let tokens = normalizedIndexText(text)
             .split(separator: " ")
             .map(String.init)
             .filter { $0.count >= 2 }
+            .map(canonicalSearchToken)
         guard !tokens.isEmpty else { return "" }
-        return tokens.map { "\"\($0)\"*" }.joined(separator: " ")
+        return tokens.map { "\"\($0)\"*" }.joined(separator: joiner)
+    }
+
+    private func canonicalSearchToken(_ token: String) -> String {
+        if token.hasSuffix("ies"), token.count > 3 {
+            return String(token.dropLast(3)) + "y"
+        }
+        if token.hasSuffix("es"), token.count > 4 {
+            return String(token.dropLast(2))
+        }
+        if token.hasSuffix("s"), token.count > 3 {
+            return String(token.dropLast())
+        }
+        return token
     }
 
     private func normalizedIndexText(_ value: String) -> String {

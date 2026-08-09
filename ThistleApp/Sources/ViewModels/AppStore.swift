@@ -60,7 +60,6 @@ final class AppStore: ObservableObject {
     @Published var manualBarcode = ""
     @Published var remoteSearchResults: [Product] = []
     @Published private(set) var localIndexedResults: [Product] = []
-    @Published private(set) var semanticRankingScores: [String: Int] = [:]
     @Published var deepSearchResult: Product?
     @Published var searchError: String?
     @Published var isSearching = false
@@ -80,7 +79,6 @@ final class AppStore: ObservableObject {
     private let catalogService: ProductCatalogServing
     private let deepSearchService: DeepSearchServing
     private let localSearchIndex = LocalCatalogSearchIndex.shared
-    private let semanticRanker = SemanticSearchRanker()
     private let persistence: AppPersistence
     private let catalogCacheTTL: TimeInterval = 60 * 60 * 24 * 7
     private let deepSearchCacheTTL: TimeInterval = 60 * 60 * 24
@@ -99,7 +97,7 @@ final class AppStore: ObservableObject {
     private var analysisCache: [String: ProductAnalysis] = [:]
     private var recentLoggedProductIDs: Set<String> = []
     private var localIndexSyncTask: Task<Void, Never>?
-    private var semanticRankingTask: Task<Void, Never>?
+    private var localSearchTask: Task<Void, Never>?
     private var remoteSearchTask: Task<Void, Never>?
     private var persistenceTask: Task<Void, Never>?
     private var rankingContextCache: [String: ProductRankingContext] = [:]
@@ -171,9 +169,8 @@ final class AppStore: ObservableObject {
 
     var localProductResults: [Product] {
         guard !activeSearchQuery.isEmpty else { return [] }
-        let candidates = localIndexedResults.isEmpty ? localCatalog : localIndexedResults
         return rankedProducts(
-            candidates.filter(matchesFilters),
+            localIndexedResults.filter(matchesFilters),
             limit: maxSearchResults
         )
     }
@@ -220,6 +217,11 @@ final class AppStore: ObservableObject {
             .filter(matchesFilters),
             limit: maxSearchResults
         )
+    }
+
+    func isSupportingSearchResult(_ product: Product) -> Bool {
+        let context = productRankingContext(for: activeSearchQuery)
+        return searchRelevance(for: product, context: context).tier == 1
     }
 
     private func rankedProducts(_ products: [Product], limit: Int? = nil) -> [Product] {
@@ -301,9 +303,17 @@ final class AppStore: ObservableObject {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let started = Date.now
         logSearch("Search submit: '\(trimmed)'")
-        prepareLocalSearch(for: trimmed, clearRemoteResults: false)
+        if activeSearchQuery != trimmed {
+            prepareLocalSearch(for: trimmed, clearRemoteResults: false)
+        }
 
         guard !trimmed.isEmpty else {
+            isSearching = false
+            remoteSearchTask?.cancel()
+            remoteSearchTask = nil
+            return
+        }
+        guard trimmed.count >= 2 else {
             isSearching = false
             remoteSearchTask?.cancel()
             remoteSearchTask = nil
@@ -324,7 +334,6 @@ final class AppStore: ObservableObject {
            (!needsGenericFoodSource || cached.products.contains(where: { $0.source == .usda })) {
             let normalizedCachedProducts = cached.products.map(withInferredStores)
             remoteSearchResults = normalizedCachedProducts
-            scheduleSemanticRanking(for: trimmed, candidates: normalizedLocalCandidates + normalizedCachedProducts)
             mergeIntoCache(Array(normalizedCachedProducts.prefix(18)))
             if cached.products.isEmpty, localIndexedResults.isEmpty, matchingMeals.isEmpty {
                 searchError = "No matching foods found in your local library or the online catalog."
@@ -338,7 +347,6 @@ final class AppStore: ObservableObject {
             // Show stale results immediately, then refresh from network in the background.
             let normalizedStaleProducts = stale.products.map(withInferredStores)
             remoteSearchResults = normalizedStaleProducts
-            scheduleSemanticRanking(for: trimmed, candidates: normalizedLocalCandidates + normalizedStaleProducts)
             mergeIntoCache(Array(normalizedStaleProducts.prefix(18)))
             logSearch("Stale cache shown immediately: \(normalizedStaleProducts.count) products")
         }
@@ -352,18 +360,24 @@ final class AppStore: ObservableObject {
         }
     }
 
-    /// Updates cached/history results without touching the network. SearchView calls this while
-    /// the user types so useful results appear immediately; explicit submit performs the refresh.
+    /// Updates indexed results without touching the network. SearchView calls this first while
+    /// the user types, then automatically starts a debounced online refresh.
     func prepareLocalSearch(for rawQuery: String? = nil, clearRemoteResults: Bool = true) {
         let trimmed = (rawQuery ?? query).trimmingCharacters(in: .whitespacesAndNewlines)
+        let queryChanged = activeSearchQuery != trimmed
+        if queryChanged {
+            localSearchTask?.cancel()
+            remoteSearchTask?.cancel()
+            remoteSearchTask = nil
+            isSearching = false
+        }
         activeSearchQuery = trimmed
         hasSubmittedSearch = !trimmed.isEmpty
         searchError = nil
         deepSearchResult = nil
-        semanticRankingTask?.cancel()
-        semanticRankingScores = [:]
 
         guard !trimmed.isEmpty else {
+            localSearchTask?.cancel()
             localIndexedResults = []
             if clearRemoteResults { remoteSearchResults = [] }
             return
@@ -376,18 +390,20 @@ final class AppStore: ObservableObject {
             remoteSearchResults = []
         }
 
-        let immediate = quickLocalCandidates(for: trimmed, limit: maxSearchResults)
-        localIndexedResults = immediate
-        scheduleSemanticRanking(for: trimmed, candidates: Array(immediate.prefix(30)))
+        // Treat the debounce window as active search so the UI does not flash an empty state
+        // between indexed lookup and the online refresh.
+        if trimmed.count >= 2 {
+            isSearching = true
+        }
 
         let maxResults = maxSearchResults
-        Task(priority: .utility) { [localSearchIndex] in
+        localSearchTask = Task(priority: .utility) { [localSearchIndex] in
             let indexed = await localSearchIndex.searchProducts(matching: trimmed, limit: maxResults)
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard self.activeSearchQuery == trimmed else { return }
                 let normalized = self.deduplicatedProductsByID(indexed.map(self.withInferredStores))
                 self.localIndexedResults = normalized
-                self.scheduleSemanticRanking(for: trimmed, candidates: normalized + self.remoteSearchResults)
             }
         }
     }
@@ -476,10 +492,10 @@ final class AppStore: ObservableObject {
         activeSearchQuery = ""
         remoteSearchTask?.cancel()
         remoteSearchTask = nil
+        localSearchTask?.cancel()
+        localSearchTask = nil
         isSearching = false
         localIndexedResults = []
-        semanticRankingTask?.cancel()
-        semanticRankingScores = [:]
         remoteSearchResults = []
         deepSearchResult = nil
         searchError = nil
@@ -521,7 +537,7 @@ final class AppStore: ObservableObject {
             guard !trimmed.isEmpty else { continue }
 
             let localStart = Date.now
-            let localCandidates = quickLocalCandidates(for: trimmed, limit: 20)
+            let localCandidates = await localSearchIndex.searchProducts(matching: trimmed, limit: 20)
             appendPerfLog(
                 "Probe '\(trimmed)' local candidates: \(localCandidates.count) in \(Date.now.timeIntervalSince(localStart).formatted(.number.precision(.fractionLength(3))))s",
                 category: "Probe"
@@ -1886,8 +1902,11 @@ final class AppStore: ObservableObject {
         }
 
         let normalizedName = normalizedComparableText(product.name)
+        let normalizedBrand = normalizedComparableText(product.brand)
+        let normalizedIdentity = normalizedComparableText("\(product.brand) \(product.name)")
         let nameTerms = Set(normalizedTerms(for: normalizedName))
-        let identityTerms = nameTerms.union(normalizedTerms(for: product.brand))
+        let brandTerms = Set(normalizedTerms(for: normalizedBrand))
+        let identityTerms = nameTerms.union(brandTerms)
         let supportingTerms = Set(normalizedTerms(for: product.ingredients.joined(separator: " ")))
             .union(normalizedTerms(for: product.stores.joined(separator: " ")))
 
@@ -1897,6 +1916,7 @@ final class AppStore: ObservableObject {
         }
 
         let matchedNameTerms = context.queryTerms.filter { matches($0, in: nameTerms) }
+        let matchedBrandTerms = context.queryTerms.filter { matches($0, in: brandTerms) }
         let matchedIdentityTerms = context.queryTerms.filter { matches($0, in: identityTerms) }
         let matchedCoreIdentityTerms = context.coreTerms.filter { matches($0, in: identityTerms) }
         let matchedCoreSupportingTerms = context.coreTerms.filter { matches($0, in: supportingTerms) }
@@ -1906,17 +1926,18 @@ final class AppStore: ObservableObject {
         let hasEveryCoreIdentityTerm = !context.coreTerms.isEmpty
             && matchedCoreIdentityTerms.count == context.coreTerms.count
         let tier: Int
-        if context.queryTerms.count > 1,
-           normalizedName == context.normalizedQuery {
+        if normalizedName == context.normalizedQuery {
+            tier = 8
+        } else if normalizedIdentity == context.normalizedQuery
+                    || normalizedName.hasPrefix(context.normalizedQuery) {
             tier = 7
-        } else if context.queryTerms.count > 1,
-                  normalizedName.contains(context.normalizedQuery) {
+        } else if normalizedName.contains(context.normalizedQuery) {
             tier = 6
         } else if matchedNameTerms.count == context.queryTerms.count {
             tier = 5
-        } else if hasEveryCoreIdentityTerm, !matchedModifiers.isEmpty {
+        } else if matchedIdentityTerms.count == context.queryTerms.count {
             tier = 4
-        } else if hasEveryCoreIdentityTerm {
+        } else if hasEveryCoreIdentityTerm, !matchedModifiers.isEmpty {
             tier = 3
         } else if !matchedCoreIdentityTerms.isEmpty {
             tier = 2
@@ -1928,9 +1949,10 @@ final class AppStore: ObservableObject {
 
         let missingTerms = max(0, context.queryTerms.count - matchedIdentityTerms.count)
         let adjustment = (tier * 1_000)
-            + (matchedNameTerms.count * 35)
-            + (matchedModifiers.count * 20)
-            - (missingTerms * 15)
+            + (matchedNameTerms.count * 60)
+            + (matchedBrandTerms.count * 35)
+            + (matchedModifiers.count * 15)
+            - (missingTerms * 25)
         return ProductSearchRelevance(tier: tier, scoreAdjustment: adjustment)
     }
 
@@ -1947,83 +1969,14 @@ final class AppStore: ObservableObject {
             boost += min(3, usageCounts[product.id, default: 0])
             return boost
         }()
-        let completenessBoost = productQualityScore(for: product)
+        let completenessBoost = isActiveSearch
+            ? min(30, productQualityScore(for: product))
+            : productQualityScore(for: product)
         let ratingBoost: Int
         switch analysis(for: product).rating {
         case .green: ratingBoost = 20
         case .yellow: ratingBoost = 8
         case .red: ratingBoost = 0
-        }
-
-        let queryBoost: Int
-        if !isActiveSearch {
-            queryBoost = 0
-        } else {
-            let normalizedName = normalizedComparableText(product.name)
-            let normalizedBrand = normalizedComparableText(product.brand)
-            let trimmed = context.normalizedQuery
-            if normalizedName == trimmed || normalizedBrand == trimmed {
-                queryBoost = 50
-            } else if normalizedName.contains(trimmed) || normalizedBrand.contains(trimmed) {
-                queryBoost = 35
-            } else {
-                let nameTerms = Set(normalizedTerms(for: normalizedName))
-                let brandTerms = Set(normalizedTerms(for: normalizedBrand))
-                let ingredientTerms = Set(normalizedTerms(for: normalizedComparableText(product.ingredients.joined(separator: " "))))
-                let storeTerms = Set(normalizedTerms(for: normalizedComparableText(product.stores.joined(separator: " "))))
-                let queryTerms = context.queryTerms
-                let hits = queryTerms.reduce(into: 0) { partial, term in
-                    if nameTerms.contains(term) {
-                        partial += 10
-                    } else if nameTerms.contains(where: { isFuzzyTokenMatch(query: term, candidate: $0) }) {
-                        partial += 7
-                    }
-
-                    if brandTerms.contains(term) {
-                        partial += 6
-                    } else if brandTerms.contains(where: { isFuzzyTokenMatch(query: term, candidate: $0) }) {
-                        partial += 5
-                    }
-
-                    if ingredientTerms.contains(term) {
-                        partial += 3
-                    } else if ingredientTerms.contains(where: { isFuzzyTokenMatch(query: term, candidate: $0) }) {
-                        partial += 2
-                    }
-
-                    if storeTerms.contains(term) {
-                        partial += 6
-                    } else if storeTerms.contains(where: { isFuzzyTokenMatch(query: term, candidate: $0) }) {
-                        partial += 5
-                    }
-                }
-                let singleTermAdjustment: Int
-                if queryTerms.count == 1, let term = queryTerms.first {
-                    let normalizedNameContainsTerm = normalizedName.contains(term)
-                    let normalizedBrandContainsTerm = normalizedBrand.contains(term)
-                    let nameHasTerm = normalizedNameContainsTerm || nameTerms.contains(term)
-                    let brandHasTerm = normalizedBrandContainsTerm || brandTerms.contains(term)
-                    let ingredientHasTerm = ingredientTerms.contains(term)
-
-                    var adjustment = 0
-                    if nameHasTerm {
-                        adjustment += 26
-                    } else if brandHasTerm {
-                        adjustment += 12
-                    } else if ingredientHasTerm {
-                        // Demote products where the query only appears incidentally in ingredients.
-                        adjustment -= 18
-                    }
-
-                    if ingredientHasTerm, !nameHasTerm, isLikelyCompositeFoodName(normalizedName) {
-                        adjustment -= 10
-                    }
-                    singleTermAdjustment = adjustment
-                } else {
-                    singleTermAdjustment = 0
-                }
-                queryBoost = hits + singleTermAdjustment
-            }
         }
 
         let sourceBoost: Int
@@ -2048,19 +2001,11 @@ final class AppStore: ObservableObject {
             }
             return 0
         }()
-        let semanticBoost = isActiveSearch ? semanticRankingScores[product.id, default: 0] : 0
         let completenessPenalty = product.isLowConfidenceCatalogEntry ? -30 : 0
         let relevanceBoost = isActiveSearch
             ? searchRelevance(for: product, context: context).scoreAdjustment
             : 0
-        return favoriteBoost + recentBoost + usageBoost + completenessBoost + ratingBoost + queryBoost + sourceBoost + wholeFoodBoost + semanticBoost + postRankPersonalizationBoost + completenessPenalty + relevanceBoost
-    }
-
-    private func isLikelyCompositeFoodName(_ normalizedName: String) -> Bool {
-        if normalizedName.contains(" and ") || normalizedName.contains("&") || normalizedName.contains(",") {
-            return true
-        }
-        return normalizedTerms(for: normalizedName).count >= 3
+        return favoriteBoost + recentBoost + usageBoost + completenessBoost + ratingBoost + sourceBoost + wholeFoodBoost + postRankPersonalizationBoost + completenessPenalty + relevanceBoost
     }
 
     private func deduplicatedProductsByID(_ products: [Product]) -> [Product] {
@@ -2649,28 +2594,6 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func scheduleSemanticRanking(for query: String, candidates: [Product]) {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            semanticRankingTask?.cancel()
-            semanticRankingScores = [:]
-            return
-        }
-
-        let deduped = deduplicatedProductsByID(candidates)
-        semanticRankingTask?.cancel()
-        semanticRankingTask = Task(priority: .utility) { [semanticRanker] in
-            let scores = await semanticRanker.score(products: deduped, query: trimmed, limit: 48)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard self.activeSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed else {
-                    return
-                }
-                self.semanticRankingScores = scores
-            }
-        }
-    }
-
     private func rebuildRecentLoggedProductIDs() {
         recentLoggedProductIDs = Set(loggedFoods.flatMap(\.sourceProductIDs))
     }
@@ -2837,7 +2760,6 @@ final class AppStore: ObservableObject {
             }
 
             remoteSearchResults = normalizedProducts
-            scheduleSemanticRanking(for: query, candidates: localIndexedResults + normalizedProducts)
             mergeIntoCache(Array(normalizedProducts.prefix(18)))
             if normalizedProducts.isEmpty, localIndexedResults.isEmpty, matchingMeals.isEmpty {
                 searchError = "No matching foods found in your local library or the online catalog."
@@ -3163,58 +3085,5 @@ private struct ParsedOrderItem {
 private struct SearchTimeoutError: LocalizedError {
     var errorDescription: String? {
         "Search timed out."
-    }
-}
-
-private actor SemanticSearchRanker {
-#if canImport(NaturalLanguage)
-    private let embedding: NLEmbedding? = NLEmbedding.sentenceEmbedding(for: .english)
-        ?? NLEmbedding.wordEmbedding(for: .english)
-#endif
-
-    func score(products: [Product], query: String, limit: Int) -> [String: Int] {
-#if canImport(NaturalLanguage)
-        guard let embedding else { return [:] }
-#endif
-        let normalizedQuery = normalizedText(query)
-        guard !normalizedQuery.isEmpty else { return [:] }
-
-        let candidates = products.compactMap { product -> (id: String, distance: Double)? in
-            let signature = productSignature(for: product)
-            guard !signature.isEmpty else { return nil }
-#if canImport(NaturalLanguage)
-            let distance = embedding.distance(between: normalizedQuery, and: signature)
-#else
-            let distance = 1.0
-#endif
-            guard distance.isFinite else { return nil }
-            return (id: product.id, distance: distance)
-        }
-        .sorted { $0.distance < $1.distance }
-
-        let capped = candidates.prefix(max(0, limit))
-        var output: [String: Int] = [:]
-        for (index, candidate) in capped.enumerated() {
-            let rankBoost = max(0, 18 - (index / 2))
-            let distanceBoost = Int(max(0, (0.95 - min(candidate.distance, 0.95)) * 22))
-            output[candidate.id] = rankBoost + distanceBoost
-        }
-        return output
-    }
-
-    private func productSignature(for product: Product) -> String {
-        let ingredients = product.ingredients.prefix(6).joined(separator: " ")
-        let stores = product.stores.prefix(2).joined(separator: " ")
-        return normalizedText("\(product.name) \(product.name) \(product.brand) \(stores) \(ingredients)")
-    }
-
-    private func normalizedText(_ text: String) -> String {
-        text
-            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
-            .lowercased()
-            .replacingOccurrences(of: "&", with: " and ")
-            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
