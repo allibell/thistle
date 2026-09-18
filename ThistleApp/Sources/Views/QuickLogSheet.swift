@@ -90,6 +90,9 @@ struct QuickLogSheet: View {
                 }
             }
         }
+        .onAppear { PerformanceDiagnostics.shared.screen("plate") }
+        .onChange(of: mode) { _, value in PerformanceDiagnostics.shared.screen("plate_" + String(describing:value)) }
+        .onChange(of: descriptionText) { _, _ in PerformanceDiagnostics.shared.input("description") }
         .presentationDetents([.large])
         .onDisappear {
             scanTask?.cancel()
@@ -508,6 +511,8 @@ struct QuickLogSheet: View {
     private func transcribeAndAnalyze(_ recordingURL: URL) async {
         defer { try? FileManager.default.removeItem(at: recordingURL) }
         guard let service = configuredOpenAIService() else { return }
+        let diagnosticsStart = Date()
+        defer { PerformanceDiagnostics.shared.record("ai_describe", milliseconds:Date().timeIntervalSince(diagnosticsStart)*1000) }
         isAIWorking = true
         aiErrorMessage = nil
         aiStatusMessage = "Transcribing voice…"
@@ -525,6 +530,8 @@ struct QuickLogSheet: View {
 
     private func analyzeDescriptionWithAI(inputMethod: FoodLogInputMethod) async {
         guard let service = configuredOpenAIService() else { return }
+        let diagnosticsStart = Date()
+        defer { PerformanceDiagnostics.shared.record("ai_describe", milliseconds:Date().timeIntervalSince(diagnosticsStart)*1000) }
         isAIWorking = true
         aiErrorMessage = nil
         aiStatusMessage = nil

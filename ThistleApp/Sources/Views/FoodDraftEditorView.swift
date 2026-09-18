@@ -4,6 +4,7 @@ struct FoodDraftEditorView: View {
     @EnvironmentObject private var store: AppStore
     @Binding var item: FoodLogDraftItem
 
+    @State private var titleDraft = FoodTitleDraft()
     @State private var replacementQuery = ""
     @State private var onlineResults: [Product] = []
     @State private var isSearching = false
@@ -14,7 +15,7 @@ struct FoodDraftEditorView: View {
     var body: some View {
         Form {
             Section {
-                TextField("Food name", text: $item.title)
+                FoodTitleField(draft: titleDraft)
                     .font(.headline)
 
                 HStack {
@@ -185,6 +186,8 @@ struct FoodDraftEditorView: View {
             }
         }
         .thistleNavigationTitle("Review Food")
+        .onAppear { titleDraft.text = item.title; PerformanceDiagnostics.shared.screen("food_review") }
+        .onDisappear { item.title = titleDraft.text }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -292,6 +295,7 @@ struct FoodDraftEditorView: View {
             analysis: store.analysis(for: product),
             inputMethod: originalInputMethod
         )
+        titleDraft.text = item.title
         replacementQuery = ""
         onlineResults = []
         showingReplacementSearch = false
@@ -373,5 +377,15 @@ struct OpenAISettingsView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+}
+
+// Keep each keystroke local; commit when leaving the editor, before logging the plate.
+private final class FoodTitleDraft: ObservableObject { @Published var text = "" }
+private struct FoodTitleField: View {
+    @ObservedObject var draft: FoodTitleDraft
+    var body: some View {
+        TextField("Food name", text: $draft.text)
+            .onChange(of: draft.text) { _, _ in PerformanceDiagnostics.shared.input("draft_name") }
     }
 }

@@ -39,6 +39,7 @@ private enum AppDeepLink {
 
 @main
 struct ThistleApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var store = AppStore()
 
     init() {
@@ -49,6 +50,8 @@ struct ThistleApp: App {
         WindowGroup {
             RootTabView()
                 .environmentObject(store)
+                .onAppear { PerformanceDiagnostics.shared.setActive(true) }
+                .onChange(of: scenePhase) { _, phase in PerformanceDiagnostics.shared.setActive(phase == .active) }
                 .onOpenURL { url in
                     guard let deepLink = AppDeepLink(url: url) else { return }
                     switch deepLink {

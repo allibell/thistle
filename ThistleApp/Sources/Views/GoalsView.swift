@@ -10,6 +10,7 @@ struct GoalsView: View {
 
     var body: some View {
         Form {
+            PerformanceDiagnosticsView()
             Section("Diet") {
                 Picker("Current diet", selection: $store.selectedDiet) {
                     Text("None").tag(nil as DietProfile?)

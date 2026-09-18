@@ -156,7 +156,8 @@ struct MealBuilderView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
     let existingMeal: SavedMeal?
-    @State private var name = ""
+    @State private var nameDraft = MealNameDraft()
+    @State private var recentProductsSnapshot: [Product] = []
     @State private var productQuery = ""
     @State private var servingsByProduct: [String: Double] = [:]
     @State private var remoteSearchResults: [Product] = []
@@ -183,7 +184,7 @@ struct MealBuilderView: View {
         NavigationStack {
             Form {
                 Section("Meal Name") {
-                    TextField("Whole30 Lunch Bowl", text: $name)
+                    MealNameField(draft: nameDraft)
                 }
 
                 Section("Find Products") {
@@ -263,7 +264,7 @@ struct MealBuilderView: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .font(.footnote)
-                        .disabled(isInferringMealNutrition || mealInferenceSeedTitle.isEmpty)
+                        .disabled(isInferringMealNutrition)
                     }
 
                     if let mealInferenceMessage, !mealInferenceMessage.isEmpty {
@@ -316,6 +317,7 @@ struct MealBuilderView: View {
                 isSearchingCatalog = false
             }
             .onAppear {
+                PerformanceDiagnostics.shared.screen("meal_builder")
                 hydrateFromExistingMealIfNeeded()
                 rebuildKnownProducts()
             }
@@ -334,7 +336,7 @@ struct MealBuilderView: View {
             }) {
                 ProductEntrySheet(
                     existingProduct: nil,
-                    defaultQuery: productQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? name : productQuery,
+                    defaultQuery: productQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nameDraft.text : productQuery,
                     allowLinkMode: false
                 )
             }
@@ -373,13 +375,13 @@ struct MealBuilderView: View {
                         if let existingMeal {
                             store.updateMeal(
                                 mealID: existingMeal.id,
-                                name: name.isEmpty ? "Custom Meal" : name,
+                                name: nameDraft.text.isEmpty ? "Custom Meal" : nameDraft.text,
                                 selections: servingsByProduct,
                                 availableProducts: allKnownProducts
                             )
                         } else {
                             store.saveMeal(
-                                name: name.isEmpty ? "Custom Meal" : name,
+                                name: nameDraft.text.isEmpty ? "Custom Meal" : nameDraft.text,
                                 selections: servingsByProduct,
                                 availableProducts: allKnownProducts
                             )
@@ -400,7 +402,7 @@ struct MealBuilderView: View {
     }
 
     private var mealInferenceSeedTitle: String {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedName = nameDraft.text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedName.isEmpty { return trimmedName }
 
         let trimmedQuery = productQuery.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -506,25 +508,7 @@ struct MealBuilderView: View {
 
     private var recentSuggestedProducts: [Product] {
         guard shouldShowRecentSuggestions else { return [] }
-
-        // Use already-cached local knownProducts instead of re-sorting store.mealBuilderProducts
-        // on every keystroke, which can cause visible typing lag.
-        let prioritized = deduplicatedProducts(store.favoriteProducts + store.recentHistoryProducts + knownProducts)
-            .filter { servingsByProduct[$0.id, default: 0] <= 0 }
-            .sorted { lhs, rhs in
-                let lhsFavorite = store.isFavorite(lhs) ? 1 : 0
-                let rhsFavorite = store.isFavorite(rhs) ? 1 : 0
-                if lhsFavorite != rhsFavorite {
-                    return lhsFavorite > rhsFavorite
-                }
-                let lhsUsage = store.usageCounts[lhs.id, default: 0]
-                let rhsUsage = store.usageCounts[rhs.id, default: 0]
-                if lhsUsage == rhsUsage {
-                    return lhs.lastUpdatedAt > rhs.lastUpdatedAt
-                }
-                return lhsUsage > rhsUsage
-            }
-        return Array(prioritized.prefix(10))
+        return Array(recentProductsSnapshot.filter { servingsByProduct[$0.id, default: 0] <= 0 }.prefix(10))
     }
 
     private var draftMealNutrition: NutritionFacts {
@@ -872,7 +856,7 @@ struct MealBuilderView: View {
         guard !didHydrateExistingMeal else { return }
         defer { didHydrateExistingMeal = true }
         guard let existingMeal else { return }
-        name = existingMeal.name
+        nameDraft.text = existingMeal.name
         for component in existingMeal.components {
             servingsByProduct[component.product.id] = component.servings
             selectedProductCache[component.product.id] = component.product
@@ -916,11 +900,20 @@ struct MealBuilderView: View {
 
     private func rebuildKnownProducts() {
         knownProducts = deduplicatedProducts(
-            store.mealBuilderProducts
+            store.localCatalog
             + remoteSearchResults
             + (semanticFallbackProduct.map { [$0] } ?? [])
             + (existingMeal?.components.map(\.product) ?? [])
         )
+        let started = Date()
+        recentProductsSnapshot = knownProducts.sorted { lhs, rhs in
+            let lf = store.isFavorite(lhs), rf = store.isFavorite(rhs)
+            if lf != rf { return lf }
+            let lu = store.usageCounts[lhs.id, default: 0], ru = store.usageCounts[rhs.id, default: 0]
+            if lu != ru { return lu > ru }
+            return lhs.lastUpdatedAt > rhs.lastUpdatedAt
+        }
+        PerformanceDiagnostics.shared.record("meal_suggestions", milliseconds: Date().timeIntervalSince(started) * 1000)
     }
 
     private func miniStatusBadge(rating: ComplianceRating) -> some View {
@@ -996,5 +989,20 @@ struct MealDetailView: View {
             .padding(.vertical, 4)
             .foregroundStyle(rating.color)
             .background(rating.color.opacity(0.16), in: Capsule())
+    }
+}
+
+// Typing publishes only to this small field, not the entire ingredient form.
+@MainActor
+private final class MealNameDraft: ObservableObject {
+    @Published var text = ""
+}
+private struct MealNameField: View {
+    @ObservedObject var draft: MealNameDraft
+    var body: some View {
+        TextField("Whole30 Lunch Bowl", text: $draft.text)
+            .onChange(of: draft.text) { _, _ in
+                PerformanceDiagnostics.shared.input("meal_name")
+            }
     }
 }

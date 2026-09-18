@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 63;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -18,6 +18,7 @@
 		568BAB695AE0EA0E0E20AA0B /* SampleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 588DE83D1ABF96A3BC4E5D43 /* SampleData.swift */; };
 		57E3E2A443DA7DBBD3FFB34B /* BitcountInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 92427DC9A1251F31F8EF8790 /* BitcountInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf */; };
 		5FEC3D126601A4A062E200FA /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEA8C0660D468047F7C570BD /* AppStore.swift */; };
+		67CE9CE86D5510E0926EEC98 /* FoodDraftEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8CE9CA756ECA6796EFCDF1F /* FoodDraftEditorView.swift */; };
 		67FC26E5C97F6BE8B706E4A7 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66E084ED6470503586CEBA70 /* SearchView.swift */; };
 		69B2B1C14844A8A627B05CE6 /* AppPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01E0DA4A7BB4DDDA1D9A2E76 /* AppPersistence.swift */; };
 		706970B38D5DC812705FD29E /* SharedViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77AB5F1E109998E866B1A422 /* SharedViews.swift */; };
@@ -32,11 +33,11 @@
 		C5622A49FFEF273EF68A09C6 /* QuickLogSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9BDEB67713453B31388851A /* QuickLogSheet.swift */; };
 		C7F3E881A7B9DE38A33B21B4 /* BarcodeNormalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF7AE872E0A4224A5DB4BFF /* BarcodeNormalizer.swift */; };
 		CA12053F911504C27FCE6579 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 00DEA0FA2BC3DBDD903C07A5 /* Assets.xcassets */; };
+		D20EB05DA5C1796B38BD3598 /* OpenAIFoodLogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B63666920197E816432D3378 /* OpenAIFoodLogService.swift */; };
 		D2A1080F4E1C83D0C24F56E8 /* NutritionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FF5B9402859F0DDC532FB62 /* NutritionModels.swift */; };
 		D4011F1C0D1B19B287E05B9A /* UnicaOne-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 56AC1651C0FC3D148FB88892 /* UnicaOne-Regular.ttf */; };
 		D957BC66181AAAA835E13A71 /* ProductEntrySheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D16AAEDB8A8E7FDE39BE68FC /* ProductEntrySheet.swift */; };
-		D0A11CE90000000000000001 /* OpenAIFoodLogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A11CE90000000000000003 /* OpenAIFoodLogService.swift */; };
-		D0A11CE90000000000000002 /* FoodDraftEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A11CE90000000000000004 /* FoodDraftEditorView.swift */; };
+		DAAE3103002E1D9FE912BCEF /* PerformanceDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB51FDCD3030285CF4486D3E /* PerformanceDiagnostics.swift */; };
 		EF3A8F74820EACDAB57C9ABD /* ThistleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B66191DC097214D5BD3030CD /* ThistleApp.swift */; };
 		FB6391274E945F3AC0CE55EE /* NutritionGoalsWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97576D7AC9A576061510979A /* NutritionGoalsWidget.swift */; };
 /* End PBXBuildFile section */
@@ -72,7 +73,7 @@
 		0D31C97555E7FEA256B10086 /* MealsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealsView.swift; sourceTree = "<group>"; };
 		126C72A49A8E6A3ED8D05468 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		1FF5B9402859F0DDC532FB62 /* NutritionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NutritionModels.swift; sourceTree = "<group>"; };
-		38199B819F7E976E29D764A6 /* Thistle.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Thistle.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		38199B819F7E976E29D764A6 /* Thistle.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Thistle.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3ED20BDA66DA7EF678260FD2 /* GoalsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalsView.swift; sourceTree = "<group>"; };
 		56AC1651C0FC3D148FB88892 /* UnicaOne-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "UnicaOne-Regular.ttf"; sourceTree = "<group>"; };
 		588DE83D1ABF96A3BC4E5D43 /* SampleData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleData.swift; sourceTree = "<group>"; };
@@ -86,14 +87,15 @@
 		84B4159507BD58A879FCBA41 /* WidgetNutritionSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetNutritionSnapshot.swift; sourceTree = "<group>"; };
 		92427DC9A1251F31F8EF8790 /* BitcountInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "BitcountInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf"; sourceTree = "<group>"; };
 		97576D7AC9A576061510979A /* NutritionGoalsWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NutritionGoalsWidget.swift; sourceTree = "<group>"; };
+		B63666920197E816432D3378 /* OpenAIFoodLogService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIFoodLogService.swift; sourceTree = "<group>"; };
 		B66191DC097214D5BD3030CD /* ThistleApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThistleApp.swift; sourceTree = "<group>"; };
-		BCABBFB8D32DE1A88ADEF5FD /* ThistleWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ThistleWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		BCABBFB8D32DE1A88ADEF5FD /* ThistleWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ThistleWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		C1B0326532AA2A269E54964B /* ProductDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductDetailView.swift; sourceTree = "<group>"; };
 		D16AAEDB8A8E7FDE39BE68FC /* ProductEntrySheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductEntrySheet.swift; sourceTree = "<group>"; };
 		D869E5234B4DF4CD04D85215 /* DiaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiaryView.swift; sourceTree = "<group>"; };
-		D0A11CE90000000000000003 /* OpenAIFoodLogService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIFoodLogService.swift; sourceTree = "<group>"; };
-		D0A11CE90000000000000004 /* FoodDraftEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodDraftEditorView.swift; sourceTree = "<group>"; };
 		DEA8C0660D468047F7C570BD /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
+		E8CE9CA756ECA6796EFCDF1F /* FoodDraftEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodDraftEditorView.swift; sourceTree = "<group>"; };
+		EB51FDCD3030285CF4486D3E /* PerformanceDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceDiagnostics.swift; sourceTree = "<group>"; };
 		EBF83D08D07E521287F90A8E /* IngredientAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IngredientAnalyzer.swift; sourceTree = "<group>"; };
 		F9BDEB67713453B31388851A /* QuickLogSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickLogSheet.swift; sourceTree = "<group>"; };
 		FA6526FB9CE2F1EF6A3353FD /* DeepSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSearchService.swift; sourceTree = "<group>"; };
@@ -172,7 +174,7 @@
 			isa = PBXGroup;
 			children = (
 				D869E5234B4DF4CD04D85215 /* DiaryView.swift */,
-				D0A11CE90000000000000004 /* FoodDraftEditorView.swift */,
+				E8CE9CA756ECA6796EFCDF1F /* FoodDraftEditorView.swift */,
 				3ED20BDA66DA7EF678260FD2 /* GoalsView.swift */,
 				0D31C97555E7FEA256B10086 /* MealsView.swift */,
 				C1B0326532AA2A269E54964B /* ProductDetailView.swift */,
@@ -213,7 +215,8 @@
 				FA6526FB9CE2F1EF6A3353FD /* DeepSearchService.swift */,
 				EBF83D08D07E521287F90A8E /* IngredientAnalyzer.swift */,
 				82B6D781C1FDF22859F9D9C5 /* LocalCatalogSearchIndex.swift */,
-				D0A11CE90000000000000003 /* OpenAIFoodLogService.swift */,
+				B63666920197E816432D3378 /* OpenAIFoodLogService.swift */,
+				EB51FDCD3030285CF4486D3E /* PerformanceDiagnostics.swift */,
 				7604E154EAE49BC475E72FF0 /* ProductCatalogService.swift */,
 				588DE83D1ABF96A3BC4E5D43 /* SampleData.swift */,
 			);
@@ -286,6 +289,14 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					4C0E3E74B2AA9B913C7FE42C = {
+						DevelopmentTeam = G3SJ7D5CMQ;
+					};
+					6E88E2734F6BB93192674C79 = {
+						DevelopmentTeam = G3SJ7D5CMQ;
+					};
+				};
 			};
 			buildConfigurationList = CB6936DE66D700F1BD4A7768 /* Build configuration list for PBXProject "Thistle" */;
 			compatibilityVersion = "Xcode 14.0";
@@ -297,6 +308,7 @@
 			);
 			mainGroup = 9440734941B40EE1AB38A465;
 			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -331,16 +343,17 @@
 				C7F3E881A7B9DE38A33B21B4 /* BarcodeNormalizer.swift in Sources */,
 				A99FFD6565F9EBA07F8F9F32 /* DeepSearchService.swift in Sources */,
 				12B9BA9B110F85A1826F4F17 /* DiaryView.swift in Sources */,
+				67CE9CE86D5510E0926EEC98 /* FoodDraftEditorView.swift in Sources */,
 				A6F97033B700B2D0DD8C8CE4 /* GoalsView.swift in Sources */,
 				8D7E0E3AFE1646EA367266A4 /* IngredientAnalyzer.swift in Sources */,
 				9205FE12D63D5ED7B38D3392 /* LocalCatalogSearchIndex.swift in Sources */,
 				11578C2D81FC6ECC990F9E21 /* MealsView.swift in Sources */,
 				D2A1080F4E1C83D0C24F56E8 /* NutritionModels.swift in Sources */,
+				D20EB05DA5C1796B38BD3598 /* OpenAIFoodLogService.swift in Sources */,
+				DAAE3103002E1D9FE912BCEF /* PerformanceDiagnostics.swift in Sources */,
 				A2D910C06474C6B283EB4AE7 /* ProductCatalogService.swift in Sources */,
 				33B926E56A34904D0DB23A6B /* ProductDetailView.swift in Sources */,
 				D957BC66181AAAA835E13A71 /* ProductEntrySheet.swift in Sources */,
-				D0A11CE90000000000000001 /* OpenAIFoodLogService.swift in Sources */,
-				D0A11CE90000000000000002 /* FoodDraftEditorView.swift in Sources */,
 				C5622A49FFEF273EF68A09C6 /* QuickLogSheet.swift in Sources */,
 				1B15392BA8A61437081324CF /* RootTabView.swift in Sources */,
 				568BAB695AE0EA0E0E20AA0B /* SampleData.swift in Sources */,
@@ -379,11 +392,20 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = ThistleApp/Thistle.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = G3SJ7D5CMQ;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ThistleApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Thistle;
-				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleTypeRole = Editor;\n    CFBundleURLName = \"com.allibell.thistle\";\n    CFBundleURLSchemes =     (\n        thistle\n    );\n}";
+				INFOPLIST_KEY_CFBundleURLTypes = (
+					{
+						CFBundleTypeRole = Editor;
+						CFBundleURLName = com.allibell.thistle;
+						CFBundleURLSchemes = (
+							thistle,
+						);
+					},
+				);
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan barcodes to look up foods in your nutrition library.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Send performance timings to your private Y-wing home server.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record a spoken food description for transcription into an editable diary draft.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -407,11 +429,20 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = ThistleApp/Thistle.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = G3SJ7D5CMQ;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ThistleApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Thistle;
-				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleTypeRole = Editor;\n    CFBundleURLName = \"com.allibell.thistle\";\n    CFBundleURLSchemes =     (\n        thistle\n    );\n}";
+				INFOPLIST_KEY_CFBundleURLTypes = (
+					{
+						CFBundleTypeRole = Editor;
+						CFBundleURLName = com.allibell.thistle;
+						CFBundleURLSchemes = (
+							thistle,
+						);
+					},
+				);
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan barcodes to look up foods in your nutrition library.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Send performance timings to your private Y-wing home server.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record a spoken food description for transcription into an editable diary draft.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -463,8 +494,9 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2026091801;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = G3SJ7D5CMQ;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -481,7 +513,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -527,8 +559,9 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2026091801;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = G3SJ7D5CMQ;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -539,7 +572,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -554,7 +587,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ThistleWidgets/ThistleWidgets.entitlements;
-				DEVELOPMENT_TEAM = G3SJ7D5CMQ;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ThistleWidgets/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -574,7 +606,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ThistleWidgets/ThistleWidgets.entitlements;
-				DEVELOPMENT_TEAM = G3SJ7D5CMQ;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ThistleWidgets/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;

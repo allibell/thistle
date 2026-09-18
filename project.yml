@@ -3,13 +3,24 @@ options:
   bundleIdPrefix: com.allibell
 settings:
   base:
-    MARKETING_VERSION: 0.1.0
-    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.1.1
+    CURRENT_PROJECT_VERSION: 2026091801
+    DEVELOPMENT_TEAM: G3SJ7D5CMQ
 targets:
   Thistle:
     type: application
     platform: iOS
     deploymentTarget: "17.0"
+    info:
+      path: ThistleApp/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSAppTransportSecurity:
+          NSExceptionDomains:
+            y-wing.taild953a6.ts.net:
+              NSExceptionAllowsInsecureHTTPLoads: true
+              NSIncludesSubdomains: false
     sources:
       - path: ThistleApp/Sources
       - path: ThistleApp/Assets.xcassets
@@ -34,6 +45,7 @@ targets:
             CFBundleURLName: com.allibell.thistle
             CFBundleURLSchemes:
               - thistle
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Send performance timings to your private Y-wing home server.
         SWIFT_VERSION: 6.0
         TARGETED_DEVICE_FAMILY: "1"
     dependencies:
@@ -55,3 +67,12 @@ targets:
         CODE_SIGN_ENTITLEMENTS: ThistleWidgets/ThistleWidgets.entitlements
         SWIFT_VERSION: 6.0
         TARGETED_DEVICE_FAMILY: "1"
+schemes:
+  Thistle:
+    build:
+      targets:
+        Thistle: all
+    run:
+      config: Debug
+    archive:
+      config: Release

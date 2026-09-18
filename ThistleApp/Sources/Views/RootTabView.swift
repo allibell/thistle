@@ -45,6 +45,7 @@ struct RootTabView: View {
             }
             .tag(AppTab.goals)
         }
+        .onChange(of: store.selectedTab) { _, tab in PerformanceDiagnostics.shared.screen(String(describing: tab)) }
         .tint(ThistleTheme.primaryGreen)
         .background(ThistleTheme.canvas.ignoresSafeArea())
     }
